@@ -1,0 +1,8 @@
+[package]
+name = "stele_ipc"
+version = "0.1.0"
+description = "Stele IPC interface"
+authors = ["Christian Duerr <contact@christianduerr.com>"]
+license = "GPL-3.0-only"
+rust-version.workspace = true
+edition.workspace = true

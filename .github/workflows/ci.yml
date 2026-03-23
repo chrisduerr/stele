@@ -1,0 +1,31 @@
+name: CI
+
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Stable
+        run: cargo test --workspace --all-targets --all-features
+      - name: Stable without features
+        run: cargo test --workspace --all-targets --no-default-features
+      - name: Oldstable
+        run: |
+          oldstable=$(cat Cargo.toml | grep "rust-version =" | sed 's/.*"\(.*\)".*/\1/')
+          rustup toolchain install --profile minimal $oldstable
+          rustup default $oldstable
+          cargo test --workspace --all-targets
+      - name: Clippy
+        run: |
+          rustup component add clippy
+          cargo clippy --all-targets --all-features -- -D warnings
+      - name: Rustfmt
+        run: |
+          rustup toolchain install nightly -c rustfmt
+          cargo +nightly fmt -- --check

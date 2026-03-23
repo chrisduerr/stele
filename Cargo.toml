@@ -1,0 +1,20 @@
+[package]
+name = "stele"
+version = "0.1.0"
+description = "Extendable Wayland Vulkan Bar"
+authors = ["Christian Duerr <contact@christianduerr.com>"]
+license = "GPL-3.0-only"
+rust-version.workspace = true
+edition.workspace = true
+
+[workspace]
+members = [
+    "stele_ipc",
+]
+
+[workspace.package]
+rust-version = "1.94.0"
+edition = "2024"
+
+[dependencies]
+stele_ipc = { version = "0.1.0", path = "./stele_ipc" }
