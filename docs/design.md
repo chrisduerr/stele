@@ -7,11 +7,66 @@ rendered to a Wayland layer shell surface using Vulkan.
 
 ## IPC Format
 
-The IPC uses JSON messages over a Unix domain socket. Messages consist of a
-single module object with the following format:
+The IPC uses JSON messages over a Unix domain socket.
+
+Message types are identified using the mandatory `type` field.
+
+### `Config` Message
+
+The config message expects a single JSON object, controlling defaults and
+non-module configuration options.
+
+```text
+Config {
+    // Message type.
+    "type": "config",
+
+    // Size of the bar in logical pixels (default: 20).
+    "size"?: uint,
+
+    // Screen edge position (default "top").
+    "edge"?: "top" | "right" | "bottom" | "left",
+
+    // Layer shell z-position (default: "bottom").
+    "layer"?: "background" | "bottom" | "top" | "overlay",
+
+    // Bar background (default: "#000000").
+    //
+    // Several different types of background are supported:
+    //  - Background color in `#rrggbb` format
+    "background"?: string,
+}
+```
+
+#### Initialization
+
+To avoid modules popping in one by one during startup, nothing is rendered
+unless the first `config` message is received. Even if the defaults are used,
+this message must be sent for rendering to begin.
+
+After the initial draw, there is no synchronization between modules. All module
+changes are applied immediately and further `config` messages are only required
+to update the configuration.
+
+#### Examples
+
+```json
+{
+    "size": 40,
+    "layer": "top"
+}
+```
+
+### `Module` Message
+
+The module message expects a single JSON object, which is used to create,
+update, or delete a module.
 
 ```text
 Module {
+    // Message type.
+    "type": "module",
+
     // Unique ID identifying this module.
     "id": string,
 
@@ -74,7 +129,7 @@ ModuleLayer {
         "active"?: bool,
     },
 
-    // Alignment within the module (default: center).
+    // Alignment within the module (default: "center").
     "alignment"?: "start" | "center" | "end",
 
     // Layer size (default: 0x0)
@@ -99,7 +154,7 @@ ModuleLayer {
 }
 ```
 
-## Module Lifecycle
+#### Module Lifecycle
 
 A module is **added** and first drawn when it is sent to the panel through IPC
 with a non-empty `layers` array.
@@ -110,7 +165,7 @@ A module is **updated** by sending the updated module state with an identical
 A module is **removed** by sending an empty `layers` array with an identical
 `id`.
 
-## Examples
+#### Examples
 
 The following module will draw the text `04:01` to the center of the panel:
 

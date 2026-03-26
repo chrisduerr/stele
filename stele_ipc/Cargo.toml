@@ -9,10 +9,13 @@ edition.workspace = true
 
 [features]
 default = ["send_message", "serde"]
-send_message = ["dep:dirs", "dep:serde_json"]
+sctk = ["dep:smithay-client-toolkit"]
+send_message = ["dep:serde_json"]
 serde = ["dep:serde"]
+vulkano = ["dep:vulkano"]
 
 [dependencies]
-dirs = { version = "6.0.0", optional = true }
 serde_json = { version = "1.0.149", optional = true }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
+smithay-client-toolkit = { version = "0.20.0", default-features = false, optional = true }
+vulkano = { version = "0.35.2", default-features = false, optional = true }
