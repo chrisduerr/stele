@@ -1,7 +1,7 @@
 [package]
 name = "stele"
 version = "0.1.0"
-description = "Extendable Wayland Vulkan Bar"
+description = "Modular Wayland Vulkan Bar"
 authors = ["Christian Duerr <contact@christianduerr.com>"]
 license = "GPL-3.0-only"
 rust-version.workspace = true
@@ -19,16 +19,24 @@ edition = "2024"
 [dependencies]
 calloop = { version = "0.14.4", features = ["signals"] }
 calloop-wayland-source = "0.4.1"
+clap = { version = "4.6.0", features = ["derive", "wrap_help"] }
 dirs = { version = "6.0.0" }
+image = { version = "0.25.10", default-features = false, features = ["rayon", "jpeg", "png"] }
+pangocairo = "0.22.0"
+pango = { version = "0.22.0", features = ["v1_44"] }
 raw-window-handle = "0.6.2"
+resvg = { version = "0.47.0", default-features = false }
 serde_json = { version = "1.0.149" }
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 smallvec = "1.15.1"
 smithay-client-toolkit = { version = "0.20.0", default-features = false }
-stele_ipc = { version = "0.1.0", path = "./stele_ipc", features = ["sctk", "vulkano"] }
+stele_ipc = { version = "0.1.0", path = "./stele_ipc", features = ["clap", "send_message", "sctk"] }
 thiserror = "2.0.18"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+vulkano-shaders = "0.35.0"
 vulkano = { version = "0.35.2", default-features = false, features = ["macros"] }
 wayland-backend = { version = "0.3.14", features = ["client_system"] }
-vulkano-shaders = "0.35.0"
+
+[dev-dependencies]
+chrono = "0.4.44"

@@ -4,6 +4,8 @@
 
 use std::fmt::{self, Display, Formatter};
 #[cfg(feature = "send_message")]
+use std::fs;
+#[cfg(feature = "send_message")]
 use std::io::Write;
 #[cfg(feature = "send_message")]
 use std::io::{Error as IoError, ErrorKind as IoErrorKind};
@@ -13,7 +15,10 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 
+#[cfg(feature = "clap")]
+use clap::{Args, ValueEnum};
 #[cfg(feature = "serde")]
 use serde::de::Error as DeError;
 #[cfg(feature = "serde")]
@@ -22,13 +27,42 @@ use serde::ser::Error as SerError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 #[cfg(feature = "sctk")]
 use smithay_client_toolkit::shell::wlr_layer::{Anchor, Layer as SctkLayer};
-#[cfg(feature = "vulkano")]
-use vulkano::format::ClearValue;
+#[cfg(feature = "tracing")]
+use tracing::error;
 
-/// Send a message to the Catacomb IPC socket.
+/// Send a message to all Stele IPC sockets.
 #[cfg(feature = "send_message")]
-pub fn send_message(socket_path: &Path, module: &Module) -> Result<(), IoError> {
+pub fn send_message(message: &IpcMessage) {
+    let runtime_dir = dirs::runtime_dir().unwrap_or_else(std::env::temp_dir);
+
+    let read_dir = match fs::read_dir(&runtime_dir) {
+        Ok(read_dir) => read_dir,
+        Err(_err) => {
+            #[cfg(feature = "tracing")]
+            error!("Failed to read runtime dir {runtime_dir:?}: {_err}");
+            return;
+        },
+    };
+
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("stele-") && name.ends_with(".sock"))
+            && let Err(_err) = send_message_to(&path, message)
+        {
+            #[cfg(feature = "tracing")]
+            error!("Failed to send IPC message to {path:?}: {_err}");
+        }
+    }
+}
+
+/// Send a message to a specific Stele IPC socket.
+#[cfg(feature = "send_message")]
+pub fn send_message_to(socket_path: impl AsRef<Path>, message: &IpcMessage) -> Result<(), IoError> {
     // Provide improved error for missing socket.
+    let socket_path = socket_path.as_ref();
     if !socket_path.exists() {
         let msg = format!("socket {socket_path:?} does not exist, make sure Stele is running");
         return Err(IoError::new(IoErrorKind::NotFound, msg));
@@ -37,7 +71,7 @@ pub fn send_message(socket_path: &Path, module: &Module) -> Result<(), IoError> 
     let mut stream = UnixStream::connect(socket_path)?;
 
     // Write message to socket.
-    let json = serde_json::to_string(&module)?;
+    let json = serde_json::to_string(&message)?;
     stream.write_all(json.as_bytes())?;
     stream.flush()?;
 
@@ -47,7 +81,7 @@ pub fn send_message(socket_path: &Path, module: &Module) -> Result<(), IoError> 
 /// IPC message format.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "lowercase"))]
-#[derive(PartialEq, Eq, Clone, Debug)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum IpcMessage {
     /// Defaults and non-module configuration options.
     Config(Config),
@@ -57,28 +91,44 @@ pub enum IpcMessage {
 
 /// Defaults and non-module configuration options.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(PartialEq, Eq, Copy, Clone, Default, Debug)]
+#[cfg_attr(feature = "clap", derive(Args))]
+#[derive(PartialEq, Eq, Clone, Default, Debug)]
 pub struct Config {
     /// Size of the bar in logical pixels.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "clap", arg(long))]
     pub size: Option<u32>,
     /// Screen edge position.
     #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "clap", arg(long, value_enum, default_value_t))]
     pub edge: Edge,
     /// Layer shell z-position.
     #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "clap", arg(long, value_enum, default_value_t))]
     pub layer: Layer,
-    /// Bar background.
+    /// Bar background layers.
+    ///
+    /// Several different types of background are supported:
+    ///  - Background color in '#rrggbb(aa)' format
+    ///  - Path to an image or SVG
     #[cfg_attr(feature = "serde", serde(default))]
-    pub background: Option<Color>,
+    #[cfg_attr(feature = "clap", arg(long = "background", num_args = 1.., verbatim_doc_comment))]
+    pub backgrounds: Vec<LayerContent>,
+}
+
+impl Config {
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 /// Bar module component.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(PartialEq, Eq, Clone, Debug)]
+#[cfg_attr(feature = "clap", derive(Args))]
+#[derive(PartialEq, Clone, Debug)]
 pub struct Module {
     /// Unique ID identifying this module.
-    pub id: String,
+    #[cfg_attr(feature = "clap", arg(long))]
+    pub id: Arc<String>,
     /// Module index within the alignment.
     ///
     /// Modules are positioned to the right of all other modules with equal
@@ -87,30 +137,133 @@ pub struct Module {
     /// Modules with equal alignment and index are positioned based on the
     /// chronological order in which they were defined.
     #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "clap", arg(long, default_value = "0"))]
     pub index: u8,
     /// Horizontal module alignment in the bar.
+    #[cfg_attr(feature = "clap", arg(long, value_enum))]
     pub alignment: Alignment,
     /// List of content layers rendered in this module.
+    ///
+    /// If no layer is specified, the module will be removed.
+    #[cfg_attr(feature = "clap", arg(long = "layer", num_args = 1..))]
     pub layers: Vec<ModuleLayer>,
     /// Program to execute on click.
-    #[serde(default)]
+    #[cfg_attr(feature = "clap", arg(skip))]
     pub onclick: Option<Program>,
+}
+
+impl Module {
+    pub fn new(id: impl Into<String>, alignment: Alignment, layers: Vec<ModuleLayer>) -> Self {
+        Self {
+            alignment,
+            layers,
+            id: Arc::new(id.into()),
+            onclick: Default::default(),
+            index: Default::default(),
+        }
+    }
 }
 
 /// Single content layer in the module.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(PartialEq, Eq, Clone, Debug)]
+#[derive(PartialEq, Clone, Debug)]
 pub struct ModuleLayer {
     /// Renderable layer data.
     pub content: LayerContent,
+    /// Text options.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub font: LayerFont,
+    /// Text foreground color.
+    pub foreground: Option<Color>,
+    /// Module visibilities, based on active mode.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub modes: LayerModes,
+    /// Alignment within the module.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub alignment: Alignment,
+    /// Layer size.
+    ///
+    /// All non-text items have a size of 0x0. When another layer with a
+    /// non-zero size is present (either text, or an explicit size), these
+    /// elements will automatically grow to fill the total module size. If
+    /// only one dimension is zero, only that dimension will grow
+    /// dynamically.
+    ///
+    /// For background colors, this represents the **minimum** size of the
+    /// layer, while images will be sized to match this size **exactly**.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub size: Size,
+    /// Reserved space outside of the layer.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub margin: Margin,
+}
+
+impl ModuleLayer {
+    pub fn new(content: LayerContent) -> Self {
+        Self {
+            content,
+            foreground: Default::default(),
+            alignment: Default::default(),
+            margin: Default::default(),
+            modes: Default::default(),
+            font: Default::default(),
+            size: Default::default(),
+        }
+    }
+}
+
+impl FromStr for ModuleLayer {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        serde_json::from_str(s).map_err(|err| format!("failed to parse layer: {err}"))
+    }
+}
+
+/// Text options.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(PartialEq, Default, Clone, Debug)]
+pub struct LayerFont {
+    /// Font family.
+    pub family: Option<Arc<String>>,
+    /// Text foreground color.
+    pub color: Option<Color>,
+    /// Font size.
+    pub size: Option<f64>,
+}
+
+/// Module visibilities, based on active mode.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(PartialEq, Eq, Default, Clone, Debug)]
+pub struct LayerModes {
+    /// No other mode active.
+    pub default: Option<bool>,
+    /// Mouse cursor hover.
+    pub hover: Option<bool>,
+    /// Mouse button pressed.
+    pub active: Option<bool>,
 }
 
 /// Renderable layer data.
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum LayerContent {
     Color(Color),
-    Path(PathBuf),
-    Text(String),
+    Path(Arc<PathBuf>),
+    Text(Arc<String>),
+}
+
+impl FromStr for LayerContent {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Ok(color) = Color::from_str(s) {
+            return Ok(Self::Color(color));
+        }
+        if s.starts_with("/") || s.starts_with("~") {
+            return Ok(Self::Path(PathBuf::from(s).into()));
+        }
+        Ok(Self::Text(s.to_owned().into()))
+    }
 }
 
 #[cfg(feature = "serde")]
@@ -146,17 +299,18 @@ impl<'de> Deserialize<'de> for LayerContent {
 
         // Attempt to parse as path.
         if text.starts_with('~') || text.starts_with('/') {
-            return Ok(Self::Path(PathBuf::from(text)));
+            return Ok(Self::Path(Arc::new(PathBuf::from(text))));
         }
 
         // Use plain text as fallback
-        Ok(Self::Text(text))
+        Ok(Self::Text(Arc::new(text)))
     }
 }
 
 /// Alignment within a container.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+#[cfg_attr(feature = "clap", derive(ValueEnum))]
 #[derive(Hash, PartialOrd, Ord, PartialEq, Eq, Default, Copy, Clone, Debug)]
 pub enum Alignment {
     Start,
@@ -169,9 +323,9 @@ pub enum Alignment {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct Program {
-    program: String,
+    pub program: String,
     #[cfg_attr(feature = "serde", serde(default))]
-    args: Vec<String>,
+    pub args: Vec<String>,
 }
 
 /// RGB color.
@@ -180,11 +334,78 @@ pub struct Color {
     pub r: u8,
     pub g: u8,
     pub b: u8,
+    pub a: u8,
 }
 
 impl Color {
-    pub fn new(r: u8, g: u8, b: u8) -> Self {
-        Self { r, g, b }
+    pub const fn new(r: u8, g: u8, b: u8) -> Self {
+        Self::new_alpha(r, g, b, 255)
+    }
+
+    pub const fn new_alpha(r: u8, g: u8, b: u8, a: u8) -> Self {
+        Self { r, g, b, a }
+    }
+}
+
+impl From<Color> for [f32; 4] {
+    fn from(color: Color) -> Self {
+        let Color { r, g, b, a } = color;
+        [r as f32 / 255., g as f32 / 255., b as f32 / 255., a as f32 / 255.]
+    }
+}
+
+impl From<Color> for [f64; 3] {
+    fn from(color: Color) -> Self {
+        let Color { r, g, b, .. } = color;
+        [r as f64 / 255., g as f64 / 255., b as f64 / 255.]
+    }
+}
+
+impl FromStr for Color {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let channels = match s.strip_prefix('#') {
+            Some(channels) => channels,
+            None => {
+                return Err(format!("color {s:?} is missing leading '#'"));
+            },
+        };
+
+        let digits = channels.len();
+        if digits != 6 && digits != 8 {
+            return Err(format!("color {s:?} has {digits} digits; expected 6 or 8"));
+        }
+
+        match u32::from_str_radix(channels, 16) {
+            Ok(mut color) => {
+                let a = if digits == 8 {
+                    let a = (color & 0xFF) as u8;
+                    color >>= 8;
+                    a
+                } else {
+                    255
+                };
+                let b = (color & 0xFF) as u8;
+                color >>= 8;
+                let g = (color & 0xFF) as u8;
+                color >>= 8;
+                let r = color as u8;
+
+                Ok(Color::new_alpha(r, g, b, a))
+            },
+            Err(_) => Err(format!("color {s:?} contains non-hex digits")),
+        }
+    }
+}
+
+impl Display for Color {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
+        if self.a != 255 {
+            write!(f, "#{:0>2x}{:0>2x}{:0>2x}{:0>2x}", self.r, self.g, self.b, self.a)
+        } else {
+            write!(f, "#{:0>2x}{:0>2x}{:0>2x}", self.r, self.g, self.b)
+        }
     }
 }
 
@@ -206,58 +427,14 @@ impl<'de> Deserialize<'de> for Color {
         D: Deserializer<'de>,
     {
         let text = String::deserialize(deserializer)?;
-        Color::from_str(&text).map_err(|err| DeError::custom(err))
-    }
-}
-
-impl FromStr for Color {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let channels = match s.strip_prefix('#') {
-            Some(channels) => channels,
-            None => {
-                return Err(format!("color {s:?} is missing leading '#'"));
-            },
-        };
-
-        let digits = channels.len();
-        if digits != 6 {
-            return Err(format!("color {s:?} has {digits} digits; expected 6"));
-        }
-
-        match u32::from_str_radix(channels, 16) {
-            Ok(mut color) => {
-                let b = (color & 0xFF) as u8;
-                color >>= 8;
-                let g = (color & 0xFF) as u8;
-                color >>= 8;
-                let r = color as u8;
-
-                Ok(Color::new(r, g, b))
-            },
-            Err(_) => Err(format!("color {s:?} contains non-hex digits")),
-        }
-    }
-}
-
-impl Display for Color {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
-        write!(f, "#{:0>2x}{:0>2x}{:0>2x}", self.r, self.g, self.b)
-    }
-}
-
-#[cfg(feature = "vulkano")]
-impl From<Color> for ClearValue {
-    fn from(color: Color) -> Self {
-        let Color { r, g, b } = color;
-        ClearValue::Float([r as f32 / 255., g as f32 / 255., b as f32 / 255., 1.])
+        Color::from_str(&text).map_err(DeError::custom)
     }
 }
 
 /// Layer shell z-position.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+#[cfg_attr(feature = "clap", derive(ValueEnum))]
 #[derive(Hash, PartialOrd, Ord, PartialEq, Eq, Default, Copy, Clone, Debug)]
 pub enum Layer {
     Background,
@@ -282,6 +459,7 @@ impl From<Layer> for SctkLayer {
 /// Screen edge position.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+#[cfg_attr(feature = "clap", derive(ValueEnum))]
 #[derive(Hash, PartialOrd, Ord, PartialEq, Eq, Default, Copy, Clone, Debug)]
 pub enum Edge {
     #[default]
@@ -301,4 +479,20 @@ impl From<Edge> for Anchor {
             Edge::Left => Anchor::TOP | Anchor::LEFT | Anchor::BOTTOM,
         }
     }
+}
+
+/// 2D size.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Hash, PartialOrd, Ord, PartialEq, Eq, Default, Copy, Clone, Debug)]
+pub struct Size {
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Margin around a layer's content.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Hash, PartialOrd, Ord, PartialEq, Eq, Default, Copy, Clone, Debug)]
+pub struct Margin {
+    pub left: u32,
+    pub right: u32,
 }

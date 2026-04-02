@@ -9,6 +9,9 @@ rendered to a Wayland layer shell surface using Vulkan.
 
 The IPC uses JSON messages over a Unix domain socket.
 
+The default socket location is
+`${XDG_RUNTIME_DIR:-/run/user/$UID}/stele-$STELE_PID.sock`.
+
 Message types are identified using the mandatory `type` field.
 
 ### `Config` Message
@@ -21,7 +24,7 @@ Config {
     // Message type.
     "type": "config",
 
-    // Size of the bar in logical pixels (default: 20).
+    // Size of the bar in logical pixels (default: 35).
     "size"?: uint,
 
     // Screen edge position (default "top").
@@ -30,11 +33,15 @@ Config {
     // Layer shell z-position (default: "bottom").
     "layer"?: "background" | "bottom" | "top" | "overlay",
 
-    // Bar background (default: "#000000").
+    // Bar background layers (default: "#000000").
     //
     // Several different types of background are supported:
-    //  - Background color in `#rrggbb` format
-    "background"?: string,
+    //  - Background color in `#rrggbb(aa)` format
+    //  - Path to an image or SVG
+    "background"?: [string],
+
+    // List of content layers rendered in this module.
+    "layers": [ModuleLayer],
 }
 ```
 
@@ -52,7 +59,7 @@ to update the configuration.
 
 ```json
 {
-    "size": 40,
+    "size": 35,
     "layer": "top"
 }
 ```
@@ -99,7 +106,7 @@ ModuleLayer {
     // Renderable layer data.
     //
     // Several different types of content are supported:
-    //  - Background color in `#rrggbb` format
+    //  - Background color in `#rrggbb(aa)` format
     //  - Path to an image or SVG
     //  - Text
     "content": string,
@@ -109,7 +116,7 @@ ModuleLayer {
         // Font family (default: "sans").
         "family"?: string,
         // Text foreground color (default: "#ffffff").
-        "color"?: "#rrggbb",
+        "color"?: "#rrggbb(aa)",
         // Font size (default: 16).
         "size"?: float,
     },
@@ -117,9 +124,9 @@ ModuleLayer {
     // Text foreground color (default: "#ffffff").
     //
     // This will only affect layers with text as `content`.
-    "foreground"?: "#rrggbb"
+    "foreground"?: "#rrggbb(aa)"
 
-    // Module visibilities based on active mode (all default: true).
+    // Module visibilities, based on active mode (all default: true).
     "modes"?: {
         // No other mode active.
         "default"?: bool,
@@ -134,13 +141,14 @@ ModuleLayer {
 
     // Layer size (default: 0x0)
     //
-    // All non-text items have a size of 0x0. When another layer with a non-zero
-    // size is present (either text, or an explicit size), these elements will
-    // automatically grow to fill the total module size. If only one dimension
-    // is zero, only that dimension will grow dynamically.
+    // A dimension other than `0` for background colors acts as a **minimum**
+    // size for the layer, while images and text will be resized or cropped to
+    // match it **exactly**.
     //
-    // For background colors this represents the *minimum* size of the layer,
-    // while images will be sized to match this size *exactly*.
+    // Dimensions equal to `0` are dynamically sized:
+    //  - Colors layers dynamically resize to match their children's size
+    //  - SVG layers dynamically resize to match their parent's size
+    //  - PNG and Text layers use their image/text's size
     "size"?: {
         "width"?: uint,
         "height"?: uint,
@@ -164,6 +172,12 @@ A module is **updated** by sending the updated module state with an identical
 
 A module is **removed** by sending an empty `layers` array with an identical
 `id`.
+
+#### Units
+
+All lengths and sizes, including font size, are in logical units. This means a
+module with a width of `32` would be `64` pixels wide when rendered on an output
+with a scale of `2`.
 
 #### Examples
 

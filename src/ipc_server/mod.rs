@@ -7,17 +7,19 @@ use std::path::PathBuf;
 use std::{env, process};
 
 use calloop::LoopHandle;
-use stele_ipc::IpcMessage;
+use stele::{Error, IpcMessage, State};
 use tracing::{debug, error, warn};
 
 use crate::ipc_server::socket::SocketSource;
-use crate::{Error, State};
 
 mod socket;
 
 /// Create and listen on the socket.
-pub fn spawn_ipc_socket(event_loop: &LoopHandle<'static, State>) -> Result<PathBuf, Error> {
-    let socket_path = socket_path();
+pub fn spawn_ipc_socket(
+    event_loop: &LoopHandle<'static, State>,
+    cli_socket_path: Option<PathBuf>,
+) -> Result<PathBuf, Error> {
+    let socket_path = cli_socket_path.unwrap_or_else(socket_path);
 
     // Spawn unix socket event source.
     let listener = UnixListener::bind(&socket_path)?;

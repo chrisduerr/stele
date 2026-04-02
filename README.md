@@ -1,0 +1,39 @@
+# Stele
+
+Stele is a Wayland bar/dock/panel with a Vulkan renderer and an IPC-based
+configuration interface.
+
+Instead of using a configuration file to customize pre-defined modules, Stele is
+only responsible for rendering. IPC and Rust interfaces are provided to write
+your own modules in whichever language you prefer.
+
+## Screenshot
+
+TBD
+
+## Configuration / IPC Interface
+
+The full IPC interface of Stele is documented [here](docs/design.md).
+
+A good way to get started with writing your own modules is looking at the
+[examples](./examples).
+
+## Building from Source
+
+Stele is compiled with cargo, which creates a binary at `target/release/stele`:
+
+```bash
+cargo build --release
+```
+
+To run Stele, the following requirements must be met:
+ - GPU with Vulkan support
+ - Wayland compositor with [wlr-layer-shell] support
+
+[wlr-layer-shell]: https://wayland.app/protocols/wlr-layer-shell-unstable-v1
+
+## Planned Features
+
+The following features are currently **not** supported, but will be added in the
+future:
+ - Mouse Input
