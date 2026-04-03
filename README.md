@@ -28,7 +28,8 @@ cargo build --release
 
 To run Stele, the following requirements must be met:
  - GPU with Vulkan support
- - Wayland compositor with [wlr-layer-shell] support
+ - Wayland with [wlr-layer-shell] support
+ - Pango/Cairo dependency
 
 [wlr-layer-shell]: https://wayland.app/protocols/wlr-layer-shell-unstable-v1
 

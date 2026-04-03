@@ -10,6 +10,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Dependencies
+        run: |
+          sudo apt update
+          sudo apt install libwayland-dev libpango1.0-dev
       - uses: actions/checkout@v2
       - name: Stable
         run: cargo test --workspace --all-features
