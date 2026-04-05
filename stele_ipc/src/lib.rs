@@ -101,6 +101,9 @@ pub struct Config {
     /// Size of the bar in logical pixels.
     #[cfg_attr(feature = "clap", arg(long))]
     pub size: Option<u32>,
+    /// Name of the output the bar should be placed on.
+    #[cfg_attr(feature = "clap", arg(long))]
+    pub output: Option<String>,
     /// Screen edge position.
     #[cfg_attr(feature = "serde", serde(default))]
     #[cfg_attr(feature = "clap", arg(long, value_enum, default_value_t))]

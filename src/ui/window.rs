@@ -58,6 +58,11 @@ impl Window {
         }
         let viewport = protocol_states.viewporter.viewport(&queue, &surface);
 
+        // Get target output from its name.
+        let output = protocol_states.output.outputs().find(|output| {
+            protocol_states.output.info(output).and_then(|info| info.name) == config.output
+        });
+
         // Create the layer shell window.
         let size = config.size.unwrap_or(DEFAULT_SIZE);
         let window = protocol_states.layer.create_layer_surface(
@@ -65,7 +70,7 @@ impl Window {
             surface.clone(),
             config.layer.into(),
             Some("panel"),
-            None,
+            output.as_ref(),
         );
         window.set_anchor(config.edge.into());
         window.set_size(0, size);

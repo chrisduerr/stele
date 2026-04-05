@@ -48,12 +48,15 @@ impl Stele {
         let (globals, queue) = globals::registry_queue_init(&connection)?;
 
         // Initialize event loop and application state.
-        let event_loop = EventLoop::try_new()?;
-        let state = State::new(connection.clone(), &globals, queue.handle())?;
+        let mut event_loop = EventLoop::try_new()?;
+        let mut state = State::new(connection.clone(), &globals, queue.handle())?;
 
         // Insert wayland source into calloop loop.
         let wayland_source = WaylandSource::new(connection, queue);
         wayland_source.insert(event_loop.handle())?;
+
+        // Roundtrip Wayland once, to retrieve output information.
+        event_loop.dispatch(None, &mut state).unwrap();
 
         Ok(Self { event_loop, state })
     }

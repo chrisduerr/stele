@@ -27,6 +27,9 @@ Config {
     // Size of the bar in logical pixels (default: 35).
     "size"?: uint,
 
+    // Name of the output the bar should be placed on.
+    "output"?: string,
+
     // Screen edge position (default "top").
     "edge"?: "top" | "right" | "bottom" | "left",
 

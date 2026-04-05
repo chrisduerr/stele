@@ -36,9 +36,9 @@ pub struct ProtocolStates {
     pub compositor: CompositorState,
     pub registry: RegistryState,
     pub viewporter: Viewporter,
+    pub output: OutputState,
     pub layer: LayerShell,
 
-    output: OutputState,
     seat: SeatState,
 }
 
