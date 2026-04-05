@@ -38,10 +38,7 @@ Config {
     // Several different types of background are supported:
     //  - Background color in `#rrggbb(aa)` format
     //  - Path to an image or SVG
-    "background"?: [string],
-
-    // List of content layers rendered in this module.
-    "layers": [ModuleLayer],
+    "backgrounds"?: [string],
 }
 ```
 
