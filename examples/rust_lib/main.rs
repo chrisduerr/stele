@@ -45,7 +45,7 @@ fn time_module() -> Module {
     // Add time text with a small background color margin at the left/right.
     let time = Local::now().format("%H:%M:%S").to_string();
     let mut text = ModuleLayer::new(LayerContent::Text(time.into()));
-    text.margin = Margin { left: 25, right: 25 };
+    text.margin = Margin::new(0, 25, 0, 25);
 
     let layers = vec![background, text];
     Module::new("time_module", Alignment::Center, layers)

@@ -549,15 +549,31 @@ impl From<Edge> for Anchor {
 /// 2D size.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Hash, PartialOrd, Ord, PartialEq, Eq, Default, Copy, Clone, Debug)]
+#[cfg_attr(feature = "serde", serde(default))]
 pub struct Size {
     pub width: u32,
     pub height: u32,
 }
 
+impl Size {
+    pub fn new(width: u32, height: u32) -> Self {
+        Self { width, height }
+    }
+}
+
 /// Margin around a layer's content.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Hash, PartialOrd, Ord, PartialEq, Eq, Default, Copy, Clone, Debug)]
+#[cfg_attr(feature = "serde", serde(default))]
 pub struct Margin {
-    pub left: u32,
+    pub top: u32,
     pub right: u32,
+    pub bottom: u32,
+    pub left: u32,
+}
+
+impl Margin {
+    pub fn new(top: u32, right: u32, bottom: u32, left: u32) -> Self {
+        Margin { top, right, bottom, left }
+    }
 }

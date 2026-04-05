@@ -153,10 +153,12 @@ ModuleLayer {
         "height"?: uint,
     },
 
-    // Reserved space outside of the layer (default: none).
+    // Reserved space outside of the layer (default: all 0).
     "margin"?: {
-        "left": uint,
-        "right": uint,
+        "top"?: uint,
+        "right"?: uint,
+        "bottom"?: uint,
+        "left"?: uint,
     },
 }
 ```

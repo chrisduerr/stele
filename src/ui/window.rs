@@ -416,8 +416,9 @@ impl BarModule {
 
             // Update total module size.
             let layer_width = layer.size.width + layer.margin.left + layer.margin.right;
+            let layer_height = layer.size.height + layer.margin.top + layer.margin.bottom;
             render_module.size.width = render_module.size.width.max(layer_width);
-            render_module.size.height = render_module.size.height.max(layer.size.height);
+            render_module.size.height = render_module.size.height.max(layer_height);
 
             render_module.layers.push(layer);
         }
@@ -480,8 +481,10 @@ impl RenderLayer {
         font.size = font.size.map(|size| size * scale);
 
         let mut margin = layer.margin;
-        margin.left = (margin.left as f64 * scale).round() as u32;
+        margin.top = (margin.top as f64 * scale).round() as u32;
         margin.right = (margin.right as f64 * scale).round() as u32;
+        margin.bottom = (margin.bottom as f64 * scale).round() as u32;
+        margin.left = (margin.left as f64 * scale).round() as u32;
 
         // Get module content and determine initial module size.
         let content = match &layer.content {
@@ -614,7 +617,8 @@ impl RenderLayer {
                 Alignment::End => self.point.x += x_delta,
             }
         }
-        let y_delta = parent_size.height as f32 - self.size.height as f32;
+        let parent_height = parent_size.height.saturating_sub(self.margin.top + self.margin.bottom);
+        let y_delta = parent_height as f32 - self.size.height as f32;
         self.point.y += y_delta / 2.;
 
         // Apply margin offset.
