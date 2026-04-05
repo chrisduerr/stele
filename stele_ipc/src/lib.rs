@@ -16,6 +16,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 #[cfg(feature = "clap")]
 use clap::{Args, ValueEnum};
@@ -29,6 +30,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smithay_client_toolkit::shell::wlr_layer::{Anchor, Layer as SctkLayer};
 #[cfg(feature = "tracing")]
 use tracing::error;
+
+/// Atomic for generating layer content IDs.
+static NEXT_RESOURCE_ID: AtomicU32 = AtomicU32::new(0);
 
 /// Send a message to all Stele IPC sockets.
 #[cfg(feature = "send_message")]
@@ -199,9 +203,9 @@ pub struct ModuleLayer {
 }
 
 impl ModuleLayer {
-    pub fn new(content: LayerContent) -> Self {
+    pub fn new(content: impl Into<LayerContent>) -> Self {
         Self {
-            content,
+            content: content.into(),
             foreground: Default::default(),
             alignment: Default::default(),
             margin: Default::default(),
@@ -245,11 +249,68 @@ pub struct LayerModes {
 }
 
 /// Renderable layer data.
+#[rustfmt::skip]
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum LayerContent {
+    // IPC layer types.
+
+    /// Background color layer.
     Color(Color),
+    /// Path to an image or SVG.
     Path(Arc<PathBuf>),
+    /// Text label.
     Text(Arc<String>),
+
+    // Rust API layer types.
+
+    /// Unparsed SVG file content.
+    ///
+    /// This can **not** be sent through the IPC socket. See [`Self::Path`] for
+    /// rendering an SVG using IPC.
+    Svg { id: u32, data: &'static [u8] },
+    /// Undecoded image file content.
+    ///
+    /// This can **not** be sent through the IPC socket. See [`Self::Path`] for
+    /// rendering an image using IPC.
+    Image { id: u32, data: &'static [u8] },
+}
+
+impl LayerContent {
+    /// Create a new SVG for rendering.
+    ///
+    /// This SVG can **not** be sent through the IPC socket. See [`Self::Path`]
+    /// for rendering an SVG using IPC.
+    pub fn svg(data: &'static [u8]) -> Self {
+        let id = NEXT_RESOURCE_ID.fetch_add(1, Ordering::Relaxed);
+        Self::Svg { id, data }
+    }
+
+    /// Create a new image for rendering.
+    ///
+    /// This image can **not** be sent through the IPC socket. See
+    /// [`Self::Path`] for rendering an image using IPC.
+    pub fn image(data: &'static [u8]) -> Self {
+        let id = NEXT_RESOURCE_ID.fetch_add(1, Ordering::Relaxed);
+        Self::Image { id, data }
+    }
+}
+
+impl From<Color> for LayerContent {
+    fn from(color: Color) -> Self {
+        Self::Color(color)
+    }
+}
+
+impl From<PathBuf> for LayerContent {
+    fn from(path: PathBuf) -> Self {
+        Self::Path(Arc::new(path))
+    }
+}
+
+impl From<String> for LayerContent {
+    fn from(text: String) -> Self {
+        Self::Text(Arc::new(text))
+    }
 }
 
 impl FromStr for LayerContent {
@@ -279,6 +340,10 @@ impl Serialize for LayerContent {
                 None => Err(SerError::custom(format!("path contains invalid UTF-8: {path:?}"))),
             },
             Self::Text(text) => serializer.serialize_str(text),
+            Self::Svg { .. } => Err(SerError::custom("SVGs cannot be shared directly through IPC")),
+            Self::Image { .. } => {
+                Err(SerError::custom("images cannot be shared directly through IPC"))
+            },
         }
     }
 }

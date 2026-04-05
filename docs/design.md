@@ -82,8 +82,7 @@ Module {
     // Modules are positioned to the right of all other modules with equal
     // alignment and smaller index.
     //
-    // Modules with equal alignment and index are positioned based on the
-    // chronological order in which they were defined.
+    // Modules with equal alignment and index are ordered arbitrarily.
     "index"?: uint,
 
     // Horizontal module alignment in the bar.

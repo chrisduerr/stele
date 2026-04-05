@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, LinkedList};
 use std::hash::Hash;
+use std::io::Cursor;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::ptr::NonNull;
@@ -263,24 +264,29 @@ impl Renderer {
     /// The `size` passed is only used for scalable resources. Images like PNGs
     /// are loaded at their original size and scaled on the GPU.
     pub fn load_resource(&mut self, size: Size, path: &Arc<PathBuf>) -> Result<Texture, Error> {
+        let data = fs::read(&**path)?;
         if path.as_ref().extension().is_some_and(|ext| ext == "svg") {
-            self.load_svg(size, path)
+            self.load_svg(size, path.into(), &data)
         } else {
-            self.load_image(path)
+            self.load_image(path.into(), &data)
         }
     }
 
     /// Load an SVG using its path.
-    pub fn load_svg(&mut self, size: Size, path: &Arc<PathBuf>) -> Result<Texture, Error> {
+    pub fn load_svg(
+        &mut self,
+        size: Size,
+        id: ImageResourceId,
+        data: &[u8],
+    ) -> Result<Texture, Error> {
         // Try to load texture from cache.
-        let key = ImageTextureKey::Svg(size, path.clone());
+        let key = ImageTextureKey::Svg(size, id);
         if let Some(texture) = self.image_textures.get(&key) {
             return Ok(texture.clone());
         }
 
         // Parse SVG data.
-        let data = fs::read(&**path)?;
-        let svg_tree = SvgTree::from_data(&data, &SvgOptions::default())?;
+        let svg_tree = SvgTree::from_data(data, &SvgOptions::default())?;
 
         // Calculate transforms to center SVG inside target buffer.
         let tree_size = svg_tree.size();
@@ -305,15 +311,15 @@ impl Renderer {
     }
 
     /// Load an image using its path.
-    pub fn load_image(&mut self, path: &Arc<PathBuf>) -> Result<Texture, Error> {
+    pub fn load_image(&mut self, id: ImageResourceId, data: &[u8]) -> Result<Texture, Error> {
         // Try to load texture from cache.
-        let key = ImageTextureKey::Image(path.clone());
+        let key = ImageTextureKey::Image(id);
         if let Some(texture) = self.image_textures.get(&key) {
             return Ok(texture.clone());
         }
 
         // Load the image.
-        let image = ImageReader::open(&**path)?.decode()?;
+        let image = ImageReader::new(Cursor::new(data)).decode()?;
 
         // Convert image format to Vulkan image format.
         let format = match image.color() {
@@ -857,11 +863,30 @@ where
     }
 }
 
-/// LRU cache key for image textures.
+/// LRU cache key for image/SVG textures.
 #[derive(Hash, PartialEq, Eq, Clone)]
 enum ImageTextureKey {
-    Svg(Size, Arc<PathBuf>),
-    Image(Arc<PathBuf>),
+    Svg(Size, ImageResourceId),
+    Image(ImageResourceId),
+}
+
+/// ID for identifying an image/SVG texture.
+#[derive(Hash, PartialEq, Eq, Clone)]
+pub enum ImageResourceId {
+    Path(Arc<PathBuf>),
+    Id(u32),
+}
+
+impl From<&Arc<PathBuf>> for ImageResourceId {
+    fn from(path: &Arc<PathBuf>) -> Self {
+        Self::Path(path.clone())
+    }
+}
+
+impl From<u32> for ImageResourceId {
+    fn from(id: u32) -> Self {
+        Self::Id(id)
+    }
 }
 
 /// Cache key for text images.

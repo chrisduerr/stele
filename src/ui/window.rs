@@ -1,8 +1,9 @@
 //! Wayland window management.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
-use std::mem;
 use std::sync::Arc;
+use std::{fs, mem};
 
 use smallvec::SmallVec;
 use smithay_client_toolkit::compositor::{CompositorState, Region};
@@ -14,7 +15,7 @@ use stele_ipc::{Alignment, Color, Config, LayerContent, LayerFont, Margin, Modul
 use tracing::error;
 
 use crate::geometry::{Point, Size};
-use crate::ui::renderer::{ActiveRenderPass, Renderer, Texture};
+use crate::ui::renderer::{ActiveRenderPass, ImageResourceId, Renderer, Texture};
 use crate::wayland::ProtocolStates;
 use crate::{Error, State};
 
@@ -150,21 +151,29 @@ impl Window {
         self.background_textures.clear();
 
         for background in &self.config.backgrounds {
-            match background {
+            let texture = match background {
                 // Colors override all previous backgrounds.
                 LayerContent::Color(color) => {
                     self.background_textures.clear();
                     clear_color = *color;
+                    continue;
                 },
-                // Stage path's resource for rendering.
-                LayerContent::Path(path) => {
-                    match self.renderer.load_resource(physical_size, path) {
-                        Ok(texture) => self.background_textures.push(texture),
-                        Err(err) => error!("Failed to load background {path:?}: {err}"),
-                    };
+                // Upload image/SVG using its path.
+                LayerContent::Path(path) => self.renderer.load_resource(physical_size, path),
+                // Upload image using its file content.
+                &LayerContent::Image { id, data } => self.renderer.load_image(id.into(), data),
+                // Upload SVG using its file content.
+                &LayerContent::Svg { id, data } => {
+                    self.renderer.load_svg(physical_size, id.into(), data)
                 },
                 // Text is ignored for the background.
-                LayerContent::Text(_) => (),
+                LayerContent::Text(_) => continue,
+            };
+
+            // Add texture to the upcoming render run.
+            match texture {
+                Ok(texture) => self.background_textures.push(texture),
+                Err(err) => error!("Failed to load background texture: {err}"),
             }
         }
 
@@ -476,7 +485,7 @@ impl RenderLayer {
 
         // Get module content and determine initial module size.
         let content = match &layer.content {
-            // Update width for text components.
+            // Update size for text components.
             LayerContent::Text(text) => {
                 // Update variable dimensions.
                 if let Some(text_size) = renderer.text_size(&font, text) {
@@ -488,27 +497,42 @@ impl RenderLayer {
                     }
                 }
 
-                RenderLayerContent::PendingLayout(layer.content.clone())
+                RenderLayerContent::Text(text.clone())
             },
-            // For images like PNGs, we load the texture immediately to determine its size.
-            LayerContent::Path(path)
-                if path.as_ref().extension().is_some_and(|ext| ext != "svg") =>
-            {
-                // Get Vulkan image texture.
-                let texture = renderer.load_image(path)?;
+            // Handle image and SVG layers.
+            LayerContent::Path(_) | LayerContent::Image { .. } | LayerContent::Svg { .. } => {
+                // Normalize paths by loading the data.
+                let (id, data, is_image) = match &layer.content {
+                    LayerContent::Path(path) => {
+                        let is_image = path.as_ref().extension().is_some_and(|ext| ext != "svg");
+                        let data = fs::read(&**path)?;
+                        (path.into(), Cow::Owned(data), is_image)
+                    },
+                    &LayerContent::Image { id, data } => (id.into(), data.into(), true),
+                    &LayerContent::Svg { id, data } => (id.into(), data.into(), false),
+                    _ => unreachable!(),
+                };
 
-                // Update variable dimensions.
-                let texture_size = texture.image().extent();
-                if size.width == 0 {
-                    size.width = texture_size[0];
-                }
-                if size.height == 0 {
-                    size.height = texture_size[1];
-                }
+                // Update rendered size for images.
+                if is_image {
+                    // Get Vulkan image texture.
+                    let texture = renderer.load_image(id, &data)?;
 
-                RenderLayerContent::Texture(texture)
+                    // Update variable dimensions.
+                    let texture_size = texture.image().extent();
+                    if size.width == 0 {
+                        size.width = texture_size[0];
+                    }
+                    if size.height == 0 {
+                        size.height = texture_size[1];
+                    }
+
+                    RenderLayerContent::Texture(texture)
+                } else {
+                    RenderLayerContent::Svg(id, data)
+                }
             },
-            _ => RenderLayerContent::PendingLayout(layer.content.clone()),
+            LayerContent::Color(color) => RenderLayerContent::Color(*color),
         };
 
         Ok(Self {
@@ -524,7 +548,7 @@ impl RenderLayer {
     /// Update background color size based on its children.
     fn update_background_size(&mut self, child_size: Size) {
         // Ignore non-color content.
-        if !matches!(self.content, RenderLayerContent::PendingLayout(LayerContent::Color(_)),) {
+        if !matches!(self.content, RenderLayerContent::Color(_)) {
             return;
         }
 
@@ -539,9 +563,9 @@ impl RenderLayer {
         parent_point: Point<f32>,
         parent_size: Size,
     ) -> Result<(), Error> {
-        // Finalize size calculation for images, SVGs and text.
+        // Finalize size calculation for SVGs and text.
         match &self.content {
-            RenderLayerContent::PendingLayout(LayerContent::Path(_)) => {
+            RenderLayerContent::Svg(..) => {
                 if self.size.width == 0 {
                     self.size.width = parent_size.width;
                 }
@@ -549,7 +573,7 @@ impl RenderLayer {
                     self.size.height = parent_size.height;
                 }
             },
-            RenderLayerContent::PendingLayout(LayerContent::Text(_)) if self.size.height == 0 => {
+            RenderLayerContent::Text(_) if self.size.height == 0 => {
                 self.size.height = parent_size.height;
             },
             _ => (),
@@ -560,26 +584,24 @@ impl RenderLayer {
             return Err(Error::EmptyLayer);
         }
 
-        // Finalize layer size and prepare content for rendering.
+        // Prepare layer content for rendering.
         match &self.content {
-            RenderLayerContent::PendingLayout(LayerContent::Color(color)) => {
+            RenderLayerContent::Color(color) => {
                 self.content = RenderLayerContent::Color(*color);
             },
-            RenderLayerContent::PendingLayout(LayerContent::Path(path)) => {
-                // All pending path layers are SVGs, since images are uploaded
-                // during render layer creation.
+            RenderLayerContent::Svg(id, path) => {
                 let texture = renderer
-                    .load_svg(self.size, path)
-                    .inspect_err(|err| error!("Failed to load resource {path:?}: {err}"))?;
+                    .load_svg(self.size, id.clone(), path)
+                    .inspect_err(|err| error!("Failed to load svg {path:?}: {err}"))?;
                 self.content = RenderLayerContent::Texture(texture);
             },
-            RenderLayerContent::PendingLayout(LayerContent::Text(text)) => {
+            RenderLayerContent::Text(text) => {
                 let texture = renderer
                     .load_text(self.font.clone(), self.size, text.clone())
                     .inspect_err(|err| error!("Failed to render text: {err}"))?;
                 self.content = RenderLayerContent::Texture(texture);
             },
-            RenderLayerContent::Texture(_) | RenderLayerContent::Color(_) => (),
+            RenderLayerContent::Texture(_) => (),
         }
 
         // Align layer within its parent.
@@ -607,8 +629,11 @@ impl RenderLayer {
 
 /// Renderable module layer content.
 enum RenderLayerContent {
-    /// Content pending size determination.
-    PendingLayout(LayerContent),
+    /// SVG content pending layout.
+    Svg(ImageResourceId, Cow<'static, [u8]>),
+    /// Text content pending layout.
+    Text(Arc<String>),
+
     /// Vulkan GPU image.
     Texture(Texture),
     /// Single-color background.
