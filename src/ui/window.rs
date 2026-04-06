@@ -11,10 +11,11 @@ use smithay_client_toolkit::reexports::client::{Connection, QueueHandle};
 use smithay_client_toolkit::reexports::protocols::wp::viewporter::client::wp_viewport::WpViewport;
 use smithay_client_toolkit::shell::WaylandSurface;
 use smithay_client_toolkit::shell::wlr_layer::LayerSurface;
-use stele_ipc::{Alignment, Color, Config, LayerContent, LayerFont, Margin, Module, ModuleLayer};
+use stele_ipc::{Alignment, Color, Config, LayerContent, Margin, Module, ModuleLayer};
 use tracing::error;
 
 use crate::geometry::{Point, Size};
+use crate::ui::renderer::text::Font;
 use crate::ui::renderer::{ActiveRenderPass, ImageResourceId, Renderer, Texture};
 use crate::wayland::ProtocolStates;
 use crate::{Error, State};
@@ -483,8 +484,9 @@ struct RenderLayer {
     content: RenderLayerContent,
     alignment: Alignment,
     point: Point<f32>,
-    font: LayerFont,
+    text_color: Color,
     margin: Margin,
+    font: Font,
     size: Size,
 }
 
@@ -494,8 +496,8 @@ impl RenderLayer {
 
         let mut size = Size::<u32>::from(layer.size) * scale;
 
-        let mut font = layer.font.clone();
-        font.size = font.size.map(|size| size * scale);
+        let font_size = layer.font.size.unwrap_or(16.) * scale;
+        let font = Font::new(layer.font.family.clone(), font_size);
 
         let mut margin = layer.margin;
         margin.top = (margin.top as f64 * scale).round() as u32;
@@ -560,8 +562,9 @@ impl RenderLayer {
             margin,
             font,
             size,
+            text_color: layer.font.color.unwrap_or_else(|| Color::new(255, 255, 255)),
             alignment: layer.alignment,
-            point: Point::default(),
+            point: Default::default(),
         })
     }
 
@@ -617,7 +620,7 @@ impl RenderLayer {
             },
             RenderLayerContent::Text(text) => {
                 let texture = renderer
-                    .load_text(self.font.clone(), self.size, text.clone())
+                    .load_text(&self.font, self.text_color, self.size, text.clone())
                     .inspect_err(|err| error!("Failed to render text: {err}"))?;
                 self.content = RenderLayerContent::Texture(texture);
             },

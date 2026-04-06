@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use pangocairo::cairo::{Context, Format, ImageSurface, ImageSurfaceDataOwned};
 use pangocairo::pango::{EllipsizeMode, FontDescription, Layout, SCALE as PANGO_SCALE};
-use stele_ipc::{Color, LayerFont};
 
 use crate::geometry::Size;
 use crate::ui::renderer::LruMap;
@@ -15,7 +14,7 @@ const MAX_LAYOUTS: usize = 10;
 
 /// Font rasterizer.
 pub struct Rasterizer {
-    layouts: LruMap<LayoutKey, FontLayout>,
+    layouts: LruMap<Font, FontLayout>,
 }
 
 impl Default for Rasterizer {
@@ -31,12 +30,11 @@ impl Rasterizer {
     /// rectangle is ellipsized.
     pub fn rasterize(
         &mut self,
-        font: &LayerFont,
+        font: &Font,
+        color: [f64; 3],
         size: Size<i32>,
         text: &str,
     ) -> (ImageSurfaceDataOwned, Size) {
-        let color: [f64; 3] = font.color.unwrap_or(Color::new(255, 255, 255)).into();
-
         // Create target cairo surface.
         let image_surface = ImageSurface::create(Format::ARgb32, size.width, size.height).unwrap();
         let context = Context::new(&image_surface).unwrap();
@@ -66,21 +64,16 @@ impl Rasterizer {
     }
 
     /// Get the layout for a font configuration.
-    pub fn layout(&mut self, font: &LayerFont) -> &mut FontLayout {
-        let size = font.size.unwrap_or(16.);
-        let family = font.family.clone();
-
-        let key = LayoutKey::new(family, size);
-
+    pub fn layout(&mut self, font: &Font) -> &mut FontLayout {
         // Create layout if it does not exist yet.
-        if !self.layouts.contains_key(&key) {
-            let family = key.family.as_ref().map_or("sans", |family| family);
-            let layout = Self::create_layout(family, size);
+        if !self.layouts.contains_key(font) {
+            let family = font.family.as_ref().map_or("sans", |family| family);
+            let layout = Self::create_layout(family, font.size());
 
-            self.layouts.insert(key.clone(), layout);
+            self.layouts.insert(font.clone(), layout);
         }
 
-        self.layouts.get(&key).unwrap()
+        self.layouts.get(font).unwrap()
     }
 
     /// Create a new pango layout.
@@ -138,16 +131,20 @@ impl Deref for FontLayout {
     }
 }
 
-/// Cache key for pango layouts.
+/// Font family and size.
 #[derive(Hash, PartialEq, Eq, Clone)]
-struct LayoutKey {
+pub struct Font {
     family: Option<Arc<String>>,
     size: u32,
 }
 
-impl LayoutKey {
-    fn new(family: Option<Arc<String>>, size: f64) -> Self {
+impl Font {
+    pub fn new(family: Option<Arc<String>>, size: f64) -> Self {
         let size = (size * 1_000.).round() as u32;
         Self { family, size }
+    }
+
+    fn size(&self) -> f64 {
+        self.size as f64 / 1_000.
     }
 }

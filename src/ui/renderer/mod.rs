@@ -19,7 +19,7 @@ use resvg::usvg::{Options as SvgOptions, Transform as SvgTransform, Tree as SvgT
 use smallvec::smallvec;
 use smithay_client_toolkit::reexports::client::protocol::wl_surface::WlSurface;
 use smithay_client_toolkit::reexports::client::{Connection, Proxy};
-use stele_ipc::{Color, LayerFont};
+use stele_ipc::Color;
 use tracing::{error, info};
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
@@ -66,7 +66,7 @@ use vulkano::{Validated, VulkanError, VulkanLibrary, single_pass_renderpass, swa
 
 use crate::Error;
 use crate::geometry::{Point, Size};
-use crate::ui::renderer::text::Rasterizer;
+use crate::ui::renderer::text::{Font, Rasterizer};
 
 /// Maximum number of cached image textures.
 const MAX_IMAGE_TEXTURES: usize = 50;
@@ -75,7 +75,7 @@ const MAX_IMAGE_TEXTURES: usize = 50;
 const MAX_TEXT_TEXTURES: usize = 50;
 
 mod shaders;
-mod text;
+pub mod text;
 
 /// Vulkan renderer.
 pub struct Renderer {
@@ -231,7 +231,7 @@ impl Renderer {
     }
 
     /// Get the size of a line of text.
-    pub fn text_size(&mut self, font: &LayerFont, text: &str) -> Option<Size> {
+    pub fn text_size(&mut self, font: &Font, text: &str) -> Option<Size> {
         let layout = self.rasterizer.layout(font);
         layout.set_text(text);
         layout.set_width(-1);
@@ -245,18 +245,19 @@ impl Renderer {
     /// Rasterize text and cache it as a Vulkan texture.
     pub fn load_text(
         &mut self,
-        font: LayerFont,
+        font: &Font,
+        color: Color,
         size: Size,
         text: Arc<String>,
     ) -> Result<Texture, Error> {
         // Try to load texture from cache.
-        let key = TextKey::new(font.clone(), size, text);
+        let key = TextKey::new(font.clone(), color, size, text);
         if let Some(texture) = self.text_textures.get(&key) {
             return Ok(texture.clone());
         }
 
         // Rasterize the text.
-        let (data, size) = self.rasterizer.rasterize(&font, size.into(), &key.text);
+        let (data, size) = self.rasterizer.rasterize(font, color.into(), size.into(), &key.text);
         let image = self.create_texture(&data, size, Format::R8G8B8A8_UNORM)?;
         let texture = Texture { image, is_premultiplied: true };
 
@@ -907,19 +908,15 @@ impl From<u32> for ImageResourceId {
 /// Cache key for text images.
 #[derive(Hash, PartialEq, Eq, Clone)]
 struct TextKey {
-    family: Option<Arc<String>>,
-    font_size: Option<u32>,
-    color: Option<Color>,
-
     text: Arc<String>,
+    color: Color,
+    font: Font,
     size: Size,
 }
 
 impl TextKey {
-    fn new(font: LayerFont, size: Size, text: Arc<String>) -> Self {
-        let font_size = font.size.map(|size| (size * 1_000.).round() as u32);
-
-        Self { font_size, size, text, family: font.family, color: font.color }
+    fn new(font: Font, color: Color, size: Size, text: Arc<String>) -> Self {
+        Self { color, font, size, text }
     }
 }
 
