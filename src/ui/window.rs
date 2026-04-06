@@ -24,6 +24,7 @@ const DEFAULT_SIZE: u32 = 35;
 
 /// Wayland window.
 pub struct Window {
+    compositor: CompositorState,
     queue: QueueHandle<State>,
     connection: Connection,
     window: LayerSurface,
@@ -39,6 +40,7 @@ pub struct Window {
     scale: f64,
 
     initial_configure_done: bool,
+    opaque_region_dirty: bool,
     stalled: bool,
     dirty: bool,
 }
@@ -91,6 +93,8 @@ impl Window {
             window,
             queue,
             size,
+            compositor: protocol_states.compositor.clone(),
+            opaque_region_dirty: true,
             modules: modules.into(),
             stalled: true,
             dirty: true,
@@ -119,6 +123,20 @@ impl Window {
         // NOTE: This must be done every time we draw with Sway; it is not
         // persisted when drawing with the same surface multiple times.
         self.viewport.set_destination(self.size.width as i32, self.size.height as i32);
+
+        // Update the window's opaque region.
+        //
+        // This is done here since it can only change on resize, but the commit happens
+        // atomically on redraw.
+        if mem::take(&mut self.opaque_region_dirty) {
+            let alpha = clear_color.a;
+            let region = if alpha == 255 { Region::new(&self.compositor).ok() } else { None };
+            let region = region.as_ref().map(|region| {
+                region.add(0, 0, self.size.width as i32, self.size.height as i32);
+                region.wl_region()
+            });
+            self.window.wl_surface().set_opaque_region(region);
+        }
 
         // Mark entire window as damaged.
         let wl_surface = self.window.wl_surface();
@@ -277,26 +295,18 @@ impl Window {
     }
 
     /// Update the window's logical size.
-    pub fn set_size(&mut self, compositor: &CompositorState, size: Size) {
+    pub fn set_size(&mut self, size: Size) {
         if self.size == size {
             return;
         }
 
         self.initial_configure_done = true;
+        self.opaque_region_dirty = true;
         self.size = size;
         self.dirty = true;
 
         // Force module redraw.
         self.clear_module_cache();
-
-        // Update the window's opaque region.
-        //
-        // This is done here since it can only change on resize, but the commit happens
-        // atomically on redraw.
-        if let Ok(region) = Region::new(compositor) {
-            region.add(0, 0, size.width as i32, size.height as i32);
-            self.window.wl_surface().set_opaque_region(Some(region.wl_region()));
-        }
 
         self.unstall();
     }
@@ -318,7 +328,9 @@ impl Window {
 
     /// Update the window configuration.
     pub fn update_config(&mut self, config: Config) {
-        self.dirty |= self.config != config;
+        let config_changed = self.config != config;
+        self.opaque_region_dirty |= config_changed;
+        self.dirty |= config_changed;
 
         if self.config.edge != config.edge {
             self.window.set_anchor(config.edge.into());

@@ -153,7 +153,7 @@ impl LayerShellHandler for State {
         };
 
         let size = Size::from(configure.new_size);
-        window.set_size(&self.protocol_states.compositor, size);
+        window.set_size(size);
     }
 }
 delegate_layer!(State);

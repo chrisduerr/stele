@@ -58,7 +58,8 @@ use vulkano::pipeline::{
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
 use vulkano::shader::ShaderModule;
 use vulkano::swapchain::{
-    Surface, Swapchain, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
+    CompositeAlpha, CompositeAlphas, Surface, Swapchain, SwapchainAcquireFuture,
+    SwapchainCreateInfo, SwapchainPresentInfo,
 };
 use vulkano::sync::{self, GpuFuture};
 use vulkano::{Validated, VulkanError, VulkanLibrary, single_pass_renderpass, swapchain};
@@ -204,9 +205,15 @@ impl Renderer {
             CommandBufferUsage::OneTimeSubmit,
         )?;
 
+        // Convert clear color to premultiplied alpha.
+        let mut clear_color: [f32; 4] = clear_color.into();
+        clear_color[0] *= clear_color[3];
+        clear_color[1] *= clear_color[3];
+        clear_color[2] *= clear_color[3];
+
         // Start the render pass.
         let mut render_pass_info = RenderPassBeginInfo::framebuffer(framebuffer);
-        render_pass_info.clear_values = vec![Some(ClearValue::Float(clear_color.into()))];
+        render_pass_info.clear_values = vec![Some(ClearValue::Float(clear_color))];
         command_builder.begin_render_pass(render_pass_info, Default::default())?;
 
         // Update the viewport.
@@ -452,10 +459,18 @@ impl SizedRenderer {
         let surface_capabilities = phys_device.surface_capabilities(surface, Default::default())?;
         let (image_format, _) = phys_device.surface_formats(surface, Default::default())?[0];
 
+        // Use transparent window if possible.
+        let composite_alpha = if surface_capabilities
+            .supported_composite_alpha
+            .contains(CompositeAlphas::PRE_MULTIPLIED)
+        {
+            CompositeAlpha::PreMultiplied
+        } else {
+            CompositeAlpha::Opaque
+        };
+
         // Create swapchain with its images.
         let surface = surface.clone();
-        let composite_alpha =
-            surface_capabilities.supported_composite_alpha.into_iter().next().unwrap();
         let (swapchain, images) = Swapchain::new(device.clone(), surface, SwapchainCreateInfo {
             composite_alpha,
             image_format,
@@ -549,7 +564,7 @@ impl SizedRenderer {
             dst_color_blend_factor: BlendFactor::OneMinusSrcAlpha,
             color_blend_op: BlendOp::Add,
             src_alpha_blend_factor: BlendFactor::One,
-            dst_alpha_blend_factor: BlendFactor::Zero,
+            dst_alpha_blend_factor: BlendFactor::OneMinusSrcAlpha,
             alpha_blend_op: BlendOp::Add,
         });
 
