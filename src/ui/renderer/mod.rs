@@ -326,7 +326,7 @@ impl Renderer {
         }
 
         // Load the image.
-        let image = ImageReader::new(Cursor::new(data)).decode()?;
+        let image = ImageReader::new(Cursor::new(data)).with_guessed_format()?.decode()?;
 
         // Convert image format to Vulkan image format.
         let format = match image.color() {
@@ -886,7 +886,7 @@ enum ImageTextureKey {
 }
 
 /// ID for identifying an image/SVG texture.
-#[derive(Hash, PartialEq, Eq, Clone)]
+#[derive(Hash, PartialEq, Eq, Clone, Debug)]
 pub enum ImageResourceId {
     Path(Arc<PathBuf>),
     Id(u32),
