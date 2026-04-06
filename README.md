@@ -7,9 +7,14 @@ Instead of using a configuration file to customize pre-defined modules, Stele is
 only responsible for rendering. IPC and Rust interfaces are provided to write
 your own modules in whichever language you prefer.
 
-## Screenshot
+## Examples
 
-TBD
+While Stele is all about making it your own, the following examples show off
+some of what's possible:
+
+#### [Stele Undead](https://github.com/chrisduerr/stele_undead)
+
+<img width="2560" height="72" alt="tmp" src="https://github.com/user-attachments/assets/6f4cfb56-bd79-47cf-b8a1-df0e43f21019" />
 
 ## Configuration / IPC Interface
 
