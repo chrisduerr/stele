@@ -15,6 +15,12 @@ impl<T> Point<T> {
     }
 }
 
+impl<T> From<(T, T)> for Point<T> {
+    fn from((x, y): (T, T)) -> Self {
+        Self { x, y }
+    }
+}
+
 impl From<Point<u32>> for Point<f32> {
     fn from(point: Point<u32>) -> Self {
         Self { x: point.x as f32, y: point.y as f32 }
@@ -35,6 +41,16 @@ impl<T: AddAssign> AddAssign for Point<T> {
     fn add_assign(&mut self, other: Point<T>) {
         self.x += other.x;
         self.y += other.y;
+    }
+}
+
+impl Mul<f64> for Point<f64> {
+    type Output = Self;
+
+    fn mul(mut self, scale: f64) -> Self {
+        self.x *= scale;
+        self.y *= scale;
+        self
     }
 }
 

@@ -37,9 +37,3 @@ To run Stele, the following requirements must be met:
  - Pango/Cairo dependency
 
 [wlr-layer-shell]: https://wayland.app/protocols/wlr-layer-shell-unstable-v1
-
-## Planned Features
-
-The following features are currently **not** supported, but will be added in the
-future:
- - Mouse Input

@@ -37,6 +37,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 vulkano-shaders = "0.35.0"
 vulkano = { version = "0.35.2", default-features = false, features = ["macros"] }
 wayland-backend = { version = "0.3.14", features = ["client_system"] }
+libc = "0.2.184"
 
 [dev-dependencies]
 chrono = "0.4.44"

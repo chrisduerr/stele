@@ -1,6 +1,10 @@
 use std::collections::HashMap;
-use std::mem;
+use std::ffi::OsStr;
+use std::mem::MaybeUninit;
+use std::os::unix::process::CommandExt;
+use std::process::{Command, Stdio};
 use std::sync::Arc;
+use std::{io, mem, ptr};
 
 pub use calloop;
 use calloop::{EventLoop, LoopHandle};
@@ -193,6 +197,48 @@ impl State {
             None => _ = self.pending_modules.insert(module.id.clone(), module),
         }
     }
+}
+
+/// Spawn an unsupervised child process.
+///
+/// This will double-fork to avoid spawning zombies, but does not provide any
+/// ability to retrieve the process' output.
+pub fn daemon<I, S>(program: S, args: I) -> io::Result<()>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let mut command = Command::new(program);
+    command.args(args);
+    command.stdin(Stdio::null());
+    command.stdout(Stdio::inherit());
+    command.stderr(Stdio::inherit());
+
+    unsafe {
+        command.pre_exec(|| {
+            // Perform second fork.
+            match libc::fork() {
+                -1 => return Err(io::Error::last_os_error()),
+                0 => (),
+                _ => libc::_exit(0),
+            }
+
+            if libc::setsid() == -1 {
+                return Err(io::Error::last_os_error());
+            }
+
+            // Reset signal handlers.
+            let mut signal_set = MaybeUninit::uninit();
+            libc::sigemptyset(signal_set.as_mut_ptr());
+            libc::sigprocmask(libc::SIG_SETMASK, signal_set.as_mut_ptr(), ptr::null_mut());
+
+            Ok(())
+        });
+    }
+
+    command.spawn()?.wait()?;
+
+    Ok(())
 }
 
 /// Stele error.

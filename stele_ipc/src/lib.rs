@@ -155,7 +155,7 @@ pub struct Module {
     #[cfg_attr(feature = "clap", arg(long = "layer", num_args = 1..))]
     pub layers: Vec<ModuleLayer>,
     /// Program to execute on click.
-    #[cfg_attr(feature = "clap", arg(skip))]
+    #[cfg_attr(feature = "clap", arg(long = "onclick", value_name = "<EXEC> [ARG]..."))]
     pub onclick: Option<Program>,
 }
 
@@ -241,14 +241,21 @@ pub struct LayerFont {
 
 /// Module visibilities, based on active mode.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(PartialEq, Eq, Default, Clone, Debug)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug)]
+#[cfg_attr(feature = "serde", serde(default))]
 pub struct LayerModes {
     /// No other mode active.
-    pub default: Option<bool>,
+    pub default: bool,
     /// Mouse cursor hover.
-    pub hover: Option<bool>,
+    pub hover: bool,
     /// Mouse button pressed.
-    pub active: Option<bool>,
+    pub active: bool,
+}
+
+impl Default for LayerModes {
+    fn default() -> Self {
+        Self { default: true, hover: true, active: true }
+    }
 }
 
 /// Renderable layer data.
@@ -394,6 +401,22 @@ pub struct Program {
     pub program: String,
     #[cfg_attr(feature = "serde", serde(default))]
     pub args: Vec<String>,
+}
+
+impl FromStr for Program {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.is_empty() {
+            return Err("executable must not be empty");
+        }
+
+        let mut split = s.split(' ');
+        let program = split.next().unwrap().to_owned();
+        let args = split.map(String::from).collect();
+
+        Ok(Self { program, args })
+    }
 }
 
 /// RGB color.

@@ -10,7 +10,9 @@ use smithay_client_toolkit::reexports::client::protocol::wl_surface::WlSurface;
 use smithay_client_toolkit::reexports::client::protocol::wl_touch::WlTouch;
 use smithay_client_toolkit::reexports::client::{Connection, QueueHandle};
 use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
-use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerHandler};
+use smithay_client_toolkit::seat::pointer::{
+    BTN_LEFT, PointerEvent, PointerEventKind, PointerHandler,
+};
 use smithay_client_toolkit::seat::touch::TouchHandler;
 use smithay_client_toolkit::seat::{Capability, SeatHandler, SeatState};
 use smithay_client_toolkit::shell::wlr_layer::{
@@ -293,8 +295,23 @@ impl PointerHandler for State {
         _connection: &Connection,
         _queue: &QueueHandle<Self>,
         _pointer: &WlPointer,
-        _events: &[PointerEvent],
+        events: &[PointerEvent],
     ) {
+        let window = match &mut self.window {
+            Some(window) => window,
+            None => return,
+        };
+
+        for event in events {
+            let point = event.position.into();
+            match event.kind {
+                PointerEventKind::Press { button: BTN_LEFT, .. } => window.pointer_down(point),
+                PointerEventKind::Release { button: BTN_LEFT, .. } => window.pointer_up(point),
+                PointerEventKind::Motion { .. } => window.pointer_motion(point),
+                PointerEventKind::Leave { .. } => window.pointer_left(),
+                _ => (),
+            }
+        }
     }
 }
 delegate_pointer!(State);

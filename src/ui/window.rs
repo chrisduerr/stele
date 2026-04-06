@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::{fs, mem};
 
@@ -11,8 +12,8 @@ use smithay_client_toolkit::reexports::client::{Connection, QueueHandle};
 use smithay_client_toolkit::reexports::protocols::wp::viewporter::client::wp_viewport::WpViewport;
 use smithay_client_toolkit::shell::WaylandSurface;
 use smithay_client_toolkit::shell::wlr_layer::LayerSurface;
-use stele_ipc::{Alignment, Color, Config, LayerContent, Margin, Module, ModuleLayer};
-use tracing::error;
+use stele_ipc::{Alignment, Color, Config, LayerContent, LayerModes, Margin, Module, ModuleLayer};
+use tracing::{error, info};
 
 use crate::geometry::{Point, Size};
 use crate::ui::renderer::text::Font;
@@ -39,6 +40,9 @@ pub struct Window {
 
     size: Size,
     scale: f64,
+
+    pointer_module: Option<Arc<String>>,
+    pointer_point: Option<Point<f64>>,
 
     initial_configure_done: bool,
     opaque_region_dirty: bool,
@@ -102,6 +106,8 @@ impl Window {
             scale: 1.,
             initial_configure_done: Default::default(),
             background_textures: Default::default(),
+            pointer_point: Default::default(),
+            pointer_module: Default::default(),
         })
     }
 
@@ -155,9 +161,16 @@ impl Window {
             }
 
             // Draw modules.
-            Self::draw_modules(render_pass, &self.modules.start, Point::default());
-            Self::draw_modules(render_pass, &self.modules.center, self.modules.center_offset);
-            Self::draw_modules(render_pass, &self.modules.end, self.modules.end_offset);
+            let physical_pointer = self.pointer_point.map(|point| point * self.scale);
+            let alignments = [
+                (&self.modules.start, Point::default()),
+                (&self.modules.center, self.modules.center_offset),
+                (&self.modules.end, self.modules.end_offset),
+            ];
+            for (modules, offset) in alignments {
+                let pointer_module = self.pointer_module.as_ref();
+                Self::draw_modules(render_pass, modules, offset, physical_pointer, pointer_module);
+            }
         });
 
         // Request a new frame.
@@ -256,9 +269,32 @@ impl Window {
         render_pass: &mut ActiveRenderPass<'_>,
         modules: &[Arc<RenderModule>],
         mut offset: Point<f32>,
+        physical_pointer: Option<Point<f64>>,
+        pointer_module: Option<&Arc<String>>,
     ) {
         for module in modules {
+            // Check whether this module is hovered/active.
+            let (hovered, active) = match (physical_pointer, pointer_module) {
+                (_, Some(active_module)) if active_module == &module.id => (true, true),
+                (_, Some(_)) => (false, false),
+                (Some(point), None) => {
+                    let hovered = offset.x <= point.x as f32
+                        && offset.x + module.size.width as f32 > point.x as f32;
+                    (hovered, false)
+                },
+                (None, None) => (false, false),
+            };
+
             for layer in &module.layers {
+                // Ignore layers which aren't active in the module's current mode.
+                if (!hovered && !layer.modes.default)
+                    || (hovered && !active && !layer.modes.hover)
+                    || (active && !layer.modes.active)
+                {
+                    continue;
+                }
+
+                // Draw the layer.
                 let point = layer.point + offset;
                 match &layer.content {
                     RenderLayerContent::Texture(texture) => {
@@ -366,6 +402,90 @@ impl Window {
         self.unstall();
     }
 
+    /// Handle pointer motion.
+    pub fn pointer_motion(&mut self, point: Point<f64>) {
+        self.pointer_point = Some(point);
+        self.dirty = true;
+
+        self.unstall();
+    }
+
+    /// Handle pointer removal
+    pub fn pointer_left(&mut self) {
+        self.pointer_module = None;
+        self.pointer_point = None;
+        self.dirty = true;
+
+        self.unstall();
+    }
+
+    /// Handle LMB press.
+    pub fn pointer_down(&mut self, point: Point<f64>) {
+        self.pointer_module = self.module_at(point);
+        self.pointer_point = Some(point);
+        self.dirty = true;
+
+        self.unstall();
+    }
+
+    /// Handle LMB release.
+    pub fn pointer_up(&mut self, point: Point<f64>) {
+        if let Some(module_id) = self.pointer_module.take()
+            && self.module_at(point).as_ref() == Some(&module_id)
+            && let Some(module) = self.modules.configured.values().find(|m| m.id == module_id)
+            && let Some(program) = &module.onclick
+        {
+            info!("Launching {} {:?}", program.program, program.args);
+            if let Err(err) = crate::daemon(&program.program, &program.args) {
+                error!("Failed launching {} {:?}: {err}", program.program, program.args);
+            }
+        }
+
+        self.dirty = true;
+
+        self.unstall();
+    }
+
+    /// Get module at the specified point.
+    fn module_at(&self, mut point: Point<f64>) -> Option<Arc<String>> {
+        // Convert point to physical coordinates.
+        point = point * self.scale;
+
+        // Ignore points outside the bar.
+        if point.x >= self.size.width as f64 * self.scale
+            || point.y >= self.size.height as f64 * self.scale
+        {
+            return None;
+        }
+
+        // Search a list of modules at an offset for the target point.
+        let find_module = |modules: &[Arc<RenderModule>], mut module_start: f64| {
+            for module in modules {
+                if point.x >= module_start && point.x < module_start + module.size.width as f64 {
+                    return Some(module.id.clone());
+                }
+                module_start += module.size.width as f64;
+            }
+            None
+        };
+
+        if let Some(module) = find_module(&self.modules.start, 0.) {
+            return Some(module);
+        }
+
+        let center_offset = self.modules.center_offset.x as f64;
+        if let Some(module) = find_module(&self.modules.center, center_offset) {
+            return Some(module);
+        }
+
+        let end_offset = self.modules.end_offset.x as f64;
+        if let Some(module) = find_module(&self.modules.end, end_offset) {
+            return Some(module);
+        }
+
+        None
+    }
+
     /// Reset render cache for all modules.
     fn clear_module_cache(&mut self) {
         for module in self.modules.configured.values_mut() {
@@ -466,8 +586,17 @@ impl From<Module> for BarModule {
     }
 }
 
+impl Deref for BarModule {
+    type Target = Module;
+
+    fn deref(&self) -> &Self::Target {
+        &self.module
+    }
+}
+
 /// Renderable module data.
 struct RenderModule {
+    id: Arc<String>,
     layers: SmallVec<[RenderLayer; 10]>,
     size: Size,
     index: u8,
@@ -475,7 +604,12 @@ struct RenderModule {
 
 impl RenderModule {
     fn new(module: &Module, height: u32) -> Self {
-        RenderModule { layers: SmallVec::new(), size: Size::new(0, height), index: module.index }
+        RenderModule {
+            size: Size::new(0, height),
+            id: module.id.clone(),
+            index: module.index,
+            layers: Default::default(),
+        }
     }
 }
 
@@ -483,6 +617,7 @@ impl RenderModule {
 struct RenderLayer {
     content: RenderLayerContent,
     alignment: Alignment,
+    modes: LayerModes,
     point: Point<f32>,
     text_color: Color,
     margin: Margin,
@@ -564,6 +699,7 @@ impl RenderLayer {
             size,
             text_color: layer.font.color.unwrap_or_else(|| Color::new(255, 255, 255)),
             alignment: layer.alignment,
+            modes: layer.modes,
             point: Default::default(),
         })
     }
