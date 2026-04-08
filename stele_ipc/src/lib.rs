@@ -219,6 +219,12 @@ impl ModuleLayer {
     }
 }
 
+impl From<LayerContent> for ModuleLayer {
+    fn from(content: LayerContent) -> Self {
+        Self::new(content)
+    }
+}
+
 impl FromStr for ModuleLayer {
     type Err = String;
 
@@ -239,6 +245,12 @@ pub struct LayerFont {
     pub size: Option<f64>,
 }
 
+impl LayerFont {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 /// Module visibilities, based on active mode.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
@@ -252,9 +264,15 @@ pub struct LayerModes {
     pub active: bool,
 }
 
+impl LayerModes {
+    pub fn new() -> Self {
+        Self { default: true, hover: true, active: true }
+    }
+}
+
 impl Default for LayerModes {
     fn default() -> Self {
-        Self { default: true, hover: true, active: true }
+        Self::new()
     }
 }
 
@@ -401,6 +419,12 @@ pub struct Program {
     pub program: String,
     #[cfg_attr(feature = "serde", serde(default))]
     pub args: Vec<String>,
+}
+
+impl Program {
+    pub fn new(program: impl Into<String>, args: Vec<String>) -> Self {
+        Self { program: program.into(), args }
+    }
 }
 
 impl FromStr for Program {
