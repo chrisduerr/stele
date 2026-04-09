@@ -28,7 +28,7 @@ use vulkano::command_buffer::{
     PrimaryCommandBufferAbstract, RenderPassBeginInfo,
 };
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
-use vulkano::descriptor_set::{DescriptorSet, WriteDescriptorSet};
+use vulkano::descriptor_set::{DescriptorImageInfo, DescriptorSet, WriteDescriptorSet};
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::device::{
     Device, DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo, QueueFlags,
@@ -50,7 +50,6 @@ use vulkano::pipeline::graphics::vertex_input::{
     Vertex, VertexBufferDescription, VertexDefinition,
 };
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
-use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
 use vulkano::pipeline::{
     DynamicState, GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout,
     PipelineShaderStageCreateInfo,
@@ -104,10 +103,10 @@ impl Renderer {
         let surface_handle = SurfaceHandle::new(connection, surface);
 
         // Initialize Vulkan library instance.
-        let library = VulkanLibrary::new()?;
+        let library = unsafe { VulkanLibrary::new()? };
         let required_extensions = Surface::required_extensions(&surface_handle).unwrap();
-        let instance = Instance::new(library, InstanceCreateInfo {
-            enabled_extensions: required_extensions,
+        let instance = Instance::new(&library, &InstanceCreateInfo {
+            enabled_extensions: &required_extensions,
             ..Default::default()
         })?;
 
@@ -123,19 +122,19 @@ impl Renderer {
         info!("Using Vulkan device {:?}", physical_device.properties().device_name);
 
         // Create the Vulkan device.
-        let (device, mut queues) = Device::new(physical_device, DeviceCreateInfo {
-            enabled_extensions: device_extensions,
-            queue_create_infos: vec![QueueCreateInfo { queue_family_index, ..Default::default() }],
+        let (device, mut queues) = Device::new(&physical_device, &DeviceCreateInfo {
+            enabled_extensions: &device_extensions,
+            queue_create_infos: &[QueueCreateInfo { queue_family_index, ..Default::default() }],
             ..Default::default()
         })?;
         let queue = queues.next().unwrap();
 
         // Create Vulkan allocators.
         let descriptor_allocator =
-            Arc::new(StandardDescriptorSetAllocator::new(device.clone(), Default::default()));
+            Arc::new(StandardDescriptorSetAllocator::new(&device, &Default::default()));
         let command_allocator =
-            Arc::new(StandardCommandBufferAllocator::new(device.clone(), Default::default()));
-        let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
+            Arc::new(StandardCommandBufferAllocator::new(&device, &Default::default()));
+        let memory_allocator = Arc::new(StandardMemoryAllocator::new(&device, &Default::default()));
 
         // Create Vulkan image sampler.
         let sampler_info = SamplerCreateInfo {
@@ -143,10 +142,10 @@ impl Renderer {
             min_filter: Filter::Linear,
             ..Default::default()
         };
-        let sampler = Sampler::new(device.clone(), sampler_info)?;
+        let sampler = Sampler::new(&device, &sampler_info)?;
 
         // Create Vulkan surface from Wayland surface.
-        let surface = Surface::from_window(instance.clone(), Arc::new(surface_handle)).unwrap();
+        let surface = Surface::from_window(&instance, &Arc::new(surface_handle)).unwrap();
 
         Ok(Self {
             descriptor_allocator,
@@ -190,6 +189,11 @@ impl Renderer {
         size: Size,
         clear_color: Color,
     ) -> Result<ActiveRenderPass<'a>, Error> {
+        // Cleanup Vulkano resources to avoid memory leakage.
+        if let Some(last_frame) = &mut self.last_frame_end {
+            last_frame.cleanup_finished();
+        }
+
         let sized = self.sized(size);
 
         // Get the next framebuffer for rendering.
@@ -366,9 +370,12 @@ impl Renderer {
                 | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
             ..Default::default()
         };
-        let allocator = self.memory_allocator.clone();
-        let upload_buffer =
-            Buffer::new_slice(allocator.clone(), buffer_info, allocation_info, data.len() as u64)?;
+        let upload_buffer = Buffer::new_slice(
+            &self.memory_allocator,
+            &buffer_info,
+            &allocation_info,
+            data.len() as u64,
+        )?;
         upload_buffer.write().unwrap().copy_from_slice(data);
 
         // Create Vulkan texture.
@@ -379,7 +386,7 @@ impl Renderer {
             extent: [size.width, size.height, 1],
             ..Default::default()
         };
-        let image = Image::new(allocator, image_info, AllocationCreateInfo::default())?;
+        let image = Image::new(&self.memory_allocator, &image_info, &Default::default())?;
 
         // Upload image to the GPU.
         let mut command_builder = AutoCommandBufferBuilder::primary(
@@ -387,11 +394,11 @@ impl Renderer {
             self.queue.queue_family_index(),
             CommandBufferUsage::OneTimeSubmit,
         )?;
-        let copy_info = CopyBufferToImageInfo::buffer_image(upload_buffer, image.clone());
+        let copy_info = CopyBufferToImageInfo::new(upload_buffer, image.clone());
         command_builder.copy_buffer_to_image(copy_info)?;
         let _ = command_builder.build()?.execute(self.queue.clone())?;
 
-        Ok(ImageView::new_default(image)?)
+        Ok(ImageView::new_default(&image)?)
     }
 
     /// Crate a buffer for a fixed number of vertices.
@@ -402,8 +409,6 @@ impl Renderer {
     where
         T: Default + Copy + BufferContents,
     {
-        let allocator = self.memory_allocator.clone();
-
         let buffer_info =
             BufferCreateInfo { usage: BufferUsage::VERTEX_BUFFER, ..Default::default() };
 
@@ -413,7 +418,7 @@ impl Renderer {
             ..Default::default()
         };
 
-        Ok(Buffer::from_iter(allocator, buffer_info, allocation_info, buffer)?)
+        Ok(Buffer::from_iter(&self.memory_allocator, &buffer_info, &allocation_info, buffer)?)
     }
 
     /// Get render state requiring a size.
@@ -426,7 +431,7 @@ impl Renderer {
             None => match SizedRenderer::new(&self.device, &self.surface, size) {
                 Ok(sized) => self.sized = Some(sized),
                 Err(err) => {
-                    error!(?err, "Failed to create Vulkan framebuffers");
+                    error!("Failed to create Vulkan framebuffers: {err}");
                     process::exit(1);
                 },
             },
@@ -457,8 +462,9 @@ impl SizedRenderer {
     fn new(device: &Arc<Device>, surface: &Arc<Surface>, size: Size) -> Result<Self, Error> {
         // Get supported image format & capabilities for the device.
         let phys_device = device.physical_device();
-        let surface_capabilities = phys_device.surface_capabilities(surface, Default::default())?;
-        let (image_format, _) = phys_device.surface_formats(surface, Default::default())?[0];
+        let surface_capabilities =
+            phys_device.surface_capabilities(surface, &Default::default())?;
+        let (image_format, _) = phys_device.surface_formats(surface, &Default::default())?[0];
 
         // Use transparent window if possible.
         let composite_alpha = if surface_capabilities
@@ -471,8 +477,7 @@ impl SizedRenderer {
         };
 
         // Create swapchain with its images.
-        let surface = surface.clone();
-        let (swapchain, images) = Swapchain::new(device.clone(), surface, SwapchainCreateInfo {
+        let (swapchain, images) = Swapchain::new(device, surface, &SwapchainCreateInfo {
             composite_alpha,
             image_format,
             min_image_count: surface_capabilities.min_image_count.max(2),
@@ -483,7 +488,7 @@ impl SizedRenderer {
 
         // Create render pass.
         let render_pass = single_pass_renderpass!(
-            device.clone(),
+            device,
             attachments: {
                 color: {
                     format: swapchain.image_format(),
@@ -499,15 +504,16 @@ impl SizedRenderer {
         )?;
 
         // Create framebuffers.
-        let framebuffers = Self::create_framebuffers(&render_pass, images)?;
+        let framebuffers = Self::create_framebuffers(&render_pass, &images)?;
 
         // Create Vulkan viewport.
-        let viewport = Viewport { extent: size.into(), offset: [0., 0.], depth_range: 0.0..=1. };
+        let viewport =
+            Viewport { extent: size.into(), offset: [0., 0.], min_depth: 0., max_depth: 1. };
 
         // Create pipeline for texture rendering.
         let texture_pipeline = Self::create_pipeline(
-            device.clone(),
-            render_pass.clone(),
+            device,
+            &render_pass,
             shaders::texture::vertex::load,
             shaders::texture::fragment::load,
             ImageVertex::per_vertex(),
@@ -515,8 +521,8 @@ impl SizedRenderer {
 
         // Create pipeline for single-color rectangles.
         let color_pipeline = Self::create_pipeline(
-            device.clone(),
-            render_pass.clone(),
+            device,
+            &render_pass,
             shaders::color::vertex::load,
             shaders::color::fragment::load,
             ColorVertex::per_vertex(),
@@ -535,29 +541,27 @@ impl SizedRenderer {
 
     /// Create a new graphics pipeline.
     fn create_pipeline<F, V>(
-        device: Arc<Device>,
-        render_pass: Arc<RenderPass>,
+        device: &Arc<Device>,
+        render_pass: &Arc<RenderPass>,
         vertex_shader_loader: V,
         fragment_shader_loader: F,
         vertex_description: VertexBufferDescription,
     ) -> Result<Arc<GraphicsPipeline>, Error>
     where
-        F: FnOnce(Arc<Device>) -> Result<Arc<ShaderModule>, Validated<VulkanError>>,
-        V: FnOnce(Arc<Device>) -> Result<Arc<ShaderModule>, Validated<VulkanError>>,
+        F: FnOnce(&Arc<Device>) -> Result<Arc<ShaderModule>, Validated<VulkanError>>,
+        V: FnOnce(&Arc<Device>) -> Result<Arc<ShaderModule>, Validated<VulkanError>>,
     {
         // Initialize shaders.
-        let vertex_shader = vertex_shader_loader(device.clone())?.entry_point("main").unwrap();
-        let fragment_shader = fragment_shader_loader(device.clone())?.entry_point("main").unwrap();
+        let vertex_shader = vertex_shader_loader(device)?.entry_point("main").unwrap();
+        let fragment_shader = fragment_shader_loader(device)?.entry_point("main").unwrap();
         let vertex_input_state = vertex_description.definition(&vertex_shader).unwrap();
-        let stages = smallvec![
-            PipelineShaderStageCreateInfo::new(vertex_shader),
-            PipelineShaderStageCreateInfo::new(fragment_shader),
+        let stages = &[
+            PipelineShaderStageCreateInfo::new(&vertex_shader),
+            PipelineShaderStageCreateInfo::new(&fragment_shader),
         ];
 
         // Create pipeline layout.
-        let layout_params = PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages)
-            .into_pipeline_layout_create_info(device.clone())?;
-        let pipeline_layout = PipelineLayout::new(device.clone(), layout_params)?;
+        let pipeline_layout = PipelineLayout::from_stages(device, stages)?;
 
         // Create blend config for premultiplied alpha.
         let blend = Some(AttachmentBlend {
@@ -570,23 +574,23 @@ impl SizedRenderer {
         });
 
         // Create the graphics pipeline for texture rendering.
-        let subpass = Subpass::from(render_pass, 0).unwrap();
+        let subpass = Subpass::new(render_pass, 0).unwrap();
         let pipeline_info = GraphicsPipelineCreateInfo {
             stages,
-            vertex_input_state: Some(vertex_input_state),
-            input_assembly_state: Some(InputAssemblyState::default()),
-            viewport_state: Some(ViewportState::default()),
-            rasterization_state: Some(RasterizationState::default()),
-            multisample_state: Some(MultisampleState::default()),
-            color_blend_state: Some(ColorBlendState::with_attachment_states(
-                subpass.num_color_attachments(),
-                ColorBlendAttachmentState { blend, ..Default::default() },
-            )),
-            dynamic_state: [DynamicState::Viewport].into_iter().collect(),
-            subpass: Some(subpass.into()),
-            ..GraphicsPipelineCreateInfo::layout(pipeline_layout.clone())
+            vertex_input_state: Some(&vertex_input_state),
+            input_assembly_state: Some(&InputAssemblyState::default()),
+            viewport_state: Some(&ViewportState::default()),
+            rasterization_state: Some(&RasterizationState::default()),
+            multisample_state: Some(&MultisampleState::default()),
+            color_blend_state: Some(&ColorBlendState {
+                attachments: &[ColorBlendAttachmentState { blend, ..Default::default() }],
+                ..Default::default()
+            }),
+            dynamic_state: &[DynamicState::Viewport],
+            subpass: Some((&subpass).into()),
+            ..GraphicsPipelineCreateInfo::new(&pipeline_layout)
         };
-        let pipeline = GraphicsPipeline::new(device, None, pipeline_info)?;
+        let pipeline = GraphicsPipeline::new(device, None, &pipeline_info)?;
 
         Ok(pipeline)
     }
@@ -599,12 +603,12 @@ impl SizedRenderer {
         self.size = size;
 
         // Recreate the Vulkan swapchain.
-        let swapchain = self.swapchain.recreate(SwapchainCreateInfo {
+        let swapchain = self.swapchain.recreate(&SwapchainCreateInfo {
             image_extent: size.into(),
             ..self.swapchain.create_info()
         });
         let swapchain_framebuffers = swapchain.and_then(|(swapchain, images)| {
-            let framebuffers = Self::create_framebuffers(&self.render_pass, images)?;
+            let framebuffers = Self::create_framebuffers(&self.render_pass, &images)?;
             Ok((swapchain, framebuffers))
         });
         match swapchain_framebuffers {
@@ -635,8 +639,7 @@ impl SizedRenderer {
 
         let framebuffer = self.framebuffers[image_index as usize].clone();
 
-        let present_info =
-            SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), image_index);
+        let present_info = SwapchainPresentInfo::new(self.swapchain.clone(), image_index);
 
         Ok((framebuffer, present_info, framebuffer_future))
     }
@@ -644,15 +647,15 @@ impl SizedRenderer {
     /// Create Vulkan framebuffers.
     fn create_framebuffers(
         render_pass: &Arc<RenderPass>,
-        images: Vec<Arc<Image>>,
+        images: &[Arc<Image>],
     ) -> Result<Vec<Arc<Framebuffer>>, Validated<VulkanError>> {
         images
-            .into_iter()
+            .iter()
             .map(|image| {
                 let view = ImageView::new_default(image)?;
 
-                Framebuffer::new(render_pass.clone(), FramebufferCreateInfo {
-                    attachments: vec![view],
+                Framebuffer::new(render_pass, &FramebufferCreateInfo {
+                    attachments: &[&view],
                     ..Default::default()
                 })
             })
@@ -688,11 +691,15 @@ impl<'a> ActiveRenderPass<'a> {
         self.command_builder.bind_pipeline_graphics(self.texture_pipeline.clone())?;
 
         // Create descriptor set for the texture.
-        let descriptor_allocator = self.renderer.descriptor_allocator.clone();
-        let sampler = self.renderer.sampler.clone();
-        let layout = pipeline_layout.set_layouts()[0].clone();
-        let descriptors = [WriteDescriptorSet::image_view_sampler(0, texture.image, sampler)];
-        let descriptor_set = DescriptorSet::new(descriptor_allocator, layout, descriptors, [])?;
+        let descriptor_allocator = &self.renderer.descriptor_allocator;
+        let layout = &pipeline_layout.set_layouts()[0];
+        let image_info = DescriptorImageInfo {
+            sampler: Some(&self.renderer.sampler),
+            image_view: Some(&texture.image),
+            ..Default::default()
+        };
+        let descriptors = [WriteDescriptorSet::image(0, &image_info)];
+        let descriptor_set = DescriptorSet::new(descriptor_allocator, layout, &descriptors, &[])?;
 
         // Bind descriptor set to the active pipeline.
         self.command_builder.bind_descriptor_sets(

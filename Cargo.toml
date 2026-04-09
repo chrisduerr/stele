@@ -34,8 +34,8 @@ stele_ipc = { version = "0.1.0", path = "./stele_ipc", features = ["clap", "send
 thiserror = "2.0.18"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-vulkano-shaders = "0.35.0"
-vulkano = { version = "0.35.2", default-features = false, features = ["macros"] }
+vulkano-shaders = { git = "https://github.com/vulkano-rs/vulkano" }
+vulkano = { git = "https://github.com/vulkano-rs/vulkano", default-features = false, features = ["macros"] }
 wayland-backend = { version = "0.3.14", features = ["client_system"] }
 libc = "0.2.184"
 

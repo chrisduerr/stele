@@ -22,7 +22,6 @@ pub use stele_ipc::*;
 use vulkano::buffer::AllocateBufferError;
 use vulkano::command_buffer::CommandBufferExecError;
 use vulkano::image::AllocateImageError;
-use vulkano::pipeline::layout::IntoPipelineLayoutCreateInfoError;
 use vulkano::{Validated, ValidationError, VulkanError};
 
 use crate::ui::window::Window;
@@ -256,8 +255,6 @@ pub enum Error {
     EventLoop(#[from] calloop::Error),
     #[error("{0}")]
     Io(#[from] std::io::Error),
-    #[error("Failed to create Vulkan pipeline parameters: {0}")]
-    VulkanPipelineParams(#[from] IntoPipelineLayoutCreateInfoError),
     #[error("Failed allocate Vulkan image: {0}")]
     VulkanAllocateImage(#[from] Validated<AllocateImageError>),
     #[error("Failed Vulkan command execution: {0}")]
