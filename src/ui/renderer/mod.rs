@@ -190,6 +190,11 @@ impl Renderer {
         size: Size,
         clear_color: Color,
     ) -> Result<ActiveRenderPass<'a>, Error> {
+        // Cleanup Vulkano resources to avoid memory leakage.
+        if let Some(last_frame) = &mut self.last_frame_end {
+            last_frame.cleanup_finished();
+        }
+
         let sized = self.sized(size);
 
         // Get the next framebuffer for rendering.
@@ -426,7 +431,7 @@ impl Renderer {
             None => match SizedRenderer::new(&self.device, &self.surface, size) {
                 Ok(sized) => self.sized = Some(sized),
                 Err(err) => {
-                    error!(?err, "Failed to create Vulkan framebuffers");
+                    error!("Failed to create Vulkan framebuffers: {err}");
                     process::exit(1);
                 },
             },
