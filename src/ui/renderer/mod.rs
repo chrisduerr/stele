@@ -1,11 +1,13 @@
 //! Vulkan renderer.
 
+use std::cell::OnceCell;
 use std::collections::{HashMap, LinkedList};
 use std::hash::Hash;
 use std::io::Cursor;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::ptr::NonNull;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::{fs, process};
 
@@ -264,7 +266,7 @@ impl Renderer {
         // Rasterize the text.
         let (data, size) = self.rasterizer.rasterize(font, color.into(), size.into(), &key.text);
         let image = self.create_texture(&data, size, Format::R8G8B8A8_UNORM)?;
-        let texture = Texture { image, is_premultiplied: true };
+        let texture = Texture::new(image, true);
 
         // Cache the rasterized texture.
         self.text_textures.insert(key, texture.clone());
@@ -315,7 +317,7 @@ impl Renderer {
 
         // Upload SVG data to the GPU.
         let image = self.create_texture(pixmap.data(), size, Format::R8G8B8A8_UNORM)?;
-        let texture = Texture { image, is_premultiplied: false };
+        let texture = Texture::new(image, false);
 
         // Cache the rasterized texture.
         self.image_textures.insert(key, texture.clone());
@@ -348,7 +350,7 @@ impl Renderer {
         // Upload image to the GPU.
         let image_size = Size::new(image.width(), image.height());
         let image = self.create_texture(image.as_bytes(), image_size, format)?;
-        let texture = Texture { image, is_premultiplied: false };
+        let texture = Texture::new(image, false);
 
         // Cache the rasterized texture.
         self.image_textures.insert(key, texture.clone());
@@ -693,11 +695,24 @@ impl<'a> ActiveRenderPass<'a> {
         self.command_builder.bind_pipeline_graphics(self.texture_pipeline.clone())?;
 
         // Create descriptor set for the texture.
-        let descriptor_allocator = self.renderer.descriptor_allocator.clone();
-        let sampler = self.renderer.sampler.clone();
-        let layout = pipeline_layout.set_layouts()[0].clone();
-        let descriptors = [WriteDescriptorSet::image_view_sampler(0, texture.image, sampler)];
-        let descriptor_set = DescriptorSet::new(descriptor_allocator, layout, descriptors, [])?;
+        let descriptor_set = match texture.descriptor_set.get() {
+            Some(descriptor_set) => descriptor_set.clone(),
+            None => {
+                let sampler = self.renderer.sampler.clone();
+                let descriptors =
+                    [WriteDescriptorSet::image_view_sampler(0, texture.image, sampler)];
+
+                let descriptor_allocator = self.renderer.descriptor_allocator.clone();
+                let layout = pipeline_layout.set_layouts()[0].clone();
+                let descriptor_set =
+                    DescriptorSet::new(descriptor_allocator, layout, descriptors, [])?;
+
+                // Cache texture's descriptor set.
+                texture.descriptor_set.set(descriptor_set.clone()).unwrap();
+
+                descriptor_set
+            },
+        };
 
         // Bind descriptor set to the active pipeline.
         self.command_builder.bind_descriptor_sets(
@@ -930,6 +945,14 @@ impl TextKey {
 pub struct Texture {
     image: Arc<ImageView>,
     is_premultiplied: bool,
+
+    descriptor_set: Rc<OnceCell<Arc<DescriptorSet>>>,
+}
+
+impl Texture {
+    fn new(image: Arc<ImageView>, is_premultiplied: bool) -> Self {
+        Self { is_premultiplied, image, descriptor_set: Default::default() }
+    }
 }
 
 impl Deref for Texture {

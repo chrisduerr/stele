@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ops::Deref;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::{fs, mem};
 
@@ -267,7 +268,7 @@ impl Window {
     /// Draw a set of renderable modules.
     fn draw_modules(
         render_pass: &mut ActiveRenderPass<'_>,
-        modules: &[Arc<RenderModule>],
+        modules: &[Rc<RenderModule>],
         mut offset: Point<f32>,
         physical_pointer: Option<Point<f64>>,
         pointer_module: Option<&Arc<String>>,
@@ -459,7 +460,7 @@ impl Window {
         }
 
         // Search a list of modules at an offset for the target point.
-        let find_module = |modules: &[Arc<RenderModule>], mut module_start: f64| {
+        let find_module = |modules: &[Rc<RenderModule>], mut module_start: f64| {
             for module in modules {
                 if point.x >= module_start && point.x < module_start + module.size.width as f64 {
                     return Some(module.id.clone());
@@ -498,12 +499,12 @@ impl Window {
 struct Modules {
     configured: HashMap<Arc<String>, BarModule>,
 
-    start: Vec<Arc<RenderModule>>,
+    start: Vec<Rc<RenderModule>>,
 
-    center: Vec<Arc<RenderModule>>,
+    center: Vec<Rc<RenderModule>>,
     center_offset: Point<f32>,
 
-    end: Vec<Arc<RenderModule>>,
+    end: Vec<Rc<RenderModule>>,
     end_offset: Point<f32>,
 }
 
@@ -522,7 +523,7 @@ impl From<HashMap<Arc<String>, Module>> for Modules {
 
 /// Container for tracking module render state.
 struct BarModule {
-    render_module: Option<Arc<RenderModule>>,
+    render_module: Option<Rc<RenderModule>>,
     module: Module,
 }
 
@@ -576,7 +577,7 @@ impl BarModule {
             parent_size = layer.size;
         }
 
-        self.render_module = Some(Arc::new(render_module));
+        self.render_module = Some(Rc::new(render_module));
     }
 }
 
