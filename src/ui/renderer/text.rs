@@ -1,6 +1,5 @@
 //! Text rendering.
 
-use std::ops::Deref;
 use std::sync::Arc;
 
 use pangocairo::cairo::{Context, Format, ImageSurface, ImageSurfaceDataOwned};
@@ -14,7 +13,7 @@ const MAX_LAYOUTS: usize = 10;
 
 /// Font rasterizer.
 pub struct Rasterizer {
-    layouts: LruMap<Font, FontLayout>,
+    layouts: LruMap<Font, Layout>,
 }
 
 impl Default for Rasterizer {
@@ -46,7 +45,7 @@ impl Rasterizer {
         layout.set_width(size.width * PANGO_SCALE);
 
         // Calculate offset for vertical text centering.
-        let text_height = layout.line_height();
+        let text_height = layout.pixel_size().1;
         let y_offset = (size.height as f64 - text_height as f64) / 2.;
 
         // Render text.
@@ -64,7 +63,7 @@ impl Rasterizer {
     }
 
     /// Get the layout for a font configuration.
-    pub fn layout(&mut self, font: &Font) -> &mut FontLayout {
+    pub fn layout(&mut self, font: &Font) -> &mut Layout {
         // Create layout if it does not exist yet.
         if !self.layouts.contains_key(font) {
             let family = font.family.as_ref().map_or("sans", |family| family);
@@ -77,7 +76,7 @@ impl Rasterizer {
     }
 
     /// Create a new pango layout.
-    fn create_layout(family: &str, size: f64) -> FontLayout {
+    fn create_layout(family: &str, size: f64) -> Layout {
         // Create pango layout.
         let image_surface = ImageSurface::create(Format::ARgb32, 0, 0).unwrap();
         let context = Context::new(&image_surface).unwrap();
@@ -92,42 +91,7 @@ impl Rasterizer {
         layout.set_ellipsize(EllipsizeMode::End);
         layout.set_height(0);
 
-        FontLayout { font, layout, line_height: Default::default() }
-    }
-}
-
-/// Pango layout with metrics cache.
-pub struct FontLayout {
-    font: FontDescription,
-    layout: Layout,
-
-    line_height: Option<i32>,
-}
-
-impl FontLayout {
-    /// Get layout's line height.
-    ///
-    /// This will automatically cache the line height,
-    /// to avoid expensive metric lookups.
-    pub fn line_height(&mut self) -> i32 {
-        match self.line_height.as_mut() {
-            Some(line_height) => *line_height,
-            None => {
-                // Get line height from font metrics.
-                let metrics = self.context().metrics(Some(&self.font), None);
-                let line_height = metrics.height() / PANGO_SCALE;
-
-                *self.line_height.insert(line_height)
-            },
-        }
-    }
-}
-
-impl Deref for FontLayout {
-    type Target = Layout;
-
-    fn deref(&self) -> &Self::Target {
-        &self.layout
+        layout
     }
 }
 
